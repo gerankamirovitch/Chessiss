@@ -1062,3 +1062,16 @@ def test_all_screens_render_in_both_themes(no_engine):
             h.window.stack.setCurrentIndex(index)
             QApplication.processEvents()
             assert not h.window.grab().toImage().isNull()
+
+
+def test_real_time_flag_through_the_screen_timer(no_engine):
+    """No fake clock: the screen's own QTimer notices a clock running out in real time."""
+    h = no_engine
+    session = GameSession(local_setup(TimeControl(1)), white_ms=400, black_ms=60_000)
+    started = time.monotonic()
+    h.game._begin(session)
+    assert wait_until(lambda: session.is_over, 3)
+    elapsed = time.monotonic() - started
+    assert 0.39 <= elapsed <= 0.6, f"flagged after {elapsed:.3f}s"
+    assert session.outcome.result == "0-1"
+    assert h.db.get_game(session.game_id).result == "0-1"

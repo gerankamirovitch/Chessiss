@@ -33,7 +33,9 @@ class LevelParams:
     movetime_ms: int
 
 
-_DEPTHS = (1, 1, 2, 2, 3, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 14, 16, 18, 22, 30)
+# Measured in matches: with equal depth a higher Skill Level alone can play worse
+# (level 6 lost to level 5 at depth 3, +10 =3 -17), so depth grows from level 5 on.
+_DEPTHS = (1, 1, 2, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 16, 18, 22, 30)
 _MOVETIMES = (50, 50, 60, 70, 80, 100, 120, 150, 180, 220,
               260, 300, 350, 400, 500, 600, 800, 1000, 1500, 2000)
 
