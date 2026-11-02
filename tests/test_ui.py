@@ -14,7 +14,8 @@ from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication, QDialog, QFileDialog, QInputDialog, QMessageBox
 
 from core.clock import TimeControl, UNTIMED
-from core.explain import Mark
+from core.engine import Score
+from core.explain import Mark, MoveExplanation
 from core.game import GameSession, GameSetup, Mode, Termination
 from core.pgn_io import read_first_game
 from storage.db import Database
@@ -546,7 +547,7 @@ def test_board_stays_responsive_while_ai_thinks_at_top_level(harness):
     assert longest < 0.1, f"the UI thread stalled for {longest:.3f}s"
 
 
-def test_undo_cancels_thinking_ai_and_drops_stale_explanations(harness):
+def test_undo_cancels_thinking_ai(harness):
     h = harness
     h.game.start_game(ai_setup(level=20))
     play(h.game, "a2a3")
@@ -555,9 +556,19 @@ def test_undo_cancels_thinking_ai_and_drops_stale_explanations(harness):
     assert h.game.status.text() == "Ваш ход"
     play(h.game, "e2e4")
     assert wait_until(lambda: h.game.session.ply_count == 2, 15)
-    assert wait_until(lambda: 1 in h.game._comments)
-    assert "e4" in h.game._comments[1][0], "the explanation of a3 must not land on e4"
-    assert "a3" not in h.game._comments[1][0].split(":")[0]
+    assert h.game.session.sans[0] == "e4"
+
+
+def test_explanation_of_an_undone_move_does_not_land_on_its_replacement(no_engine):
+    h = no_engine
+    h.game.start_game(local_setup())
+    session = h.game.session
+    stale = session.play(chess.Move.from_uci("a2a3"))
+    session.undo()
+    session.play(chess.Move.from_uci("e2e4"))
+    explanation = MoveExplanation("a3", chess.WHITE, Score(-50), 80, Mark.INACCURACY, False, "e4", None, [], ["устарело"])
+    h.game._on_explanation(session, stale, explanation)
+    assert 1 not in h.game._comments
 
 
 def test_ai_flag_ends_game_when_its_clock_runs_out(harness, fake_time):
@@ -581,6 +592,7 @@ def test_hint_gives_candidates_with_reasons_and_arrows(harness):
     assert "Фxf7" in h.game._hint_text and "мат" in h.game._hint_text
     assert h.game.board._arrows
     assert "Подсказка" in h.game.coach.toPlainText()
+    assert "[[" not in h.game.coach.toPlainText()
     play(h.game, "h5f7")
     assert h.game.board._arrows == [] and h.game._hint_text == ""
 

@@ -127,9 +127,12 @@ class AnalysisScreen(QWidget):
         for button in (self.open_button, self.analyze_button, self.cancel_button, self.flip_button, self.export_button):
             button.setAutoDefault(False)
 
-        actions = QHBoxLayout()
-        for button in (self.open_button, self.analyze_button, self.cancel_button, self.flip_button, self.export_button):
-            actions.addWidget(button)
+        run_row = QHBoxLayout()
+        run_row.addWidget(self.analyze_button)
+        run_row.addWidget(self.cancel_button)
+        file_row = QHBoxLayout()
+        for button in (self.open_button, self.export_button, self.flip_button):
+            file_row.addWidget(button)
 
         side = QVBoxLayout()
         side.setContentsMargins(0, 0, 0, 0)
@@ -139,7 +142,8 @@ class AnalysisScreen(QWidget):
         side.addWidget(self.nav)
         side.addWidget(self.coach, 3)
         side.addWidget(self.progress)
-        side.addLayout(actions)
+        side.addLayout(run_row)
+        side.addLayout(file_row)
         side_widget = QWidget()
         side_widget.setLayout(side)
         side_widget.setFixedWidth(440)

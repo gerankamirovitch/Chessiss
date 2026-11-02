@@ -144,7 +144,7 @@ class MoveList(QTableWidget):
 
 
 class EvalGraph(QWidget):
-    """Evaluation by ply, white at the top. Click to jump to a move."""
+    """Evaluation by ply: the light area grows as white's advantage grows. Click to jump to a move."""
 
     plySelected = Signal(int)
     _SCALE_CP = 600
@@ -286,10 +286,10 @@ class NavBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         for text, handler, tip in (
-            ("⏮", on_first, "К началу (Home)"),
-            ("◀", on_prev, "Ход назад (←)"),
-            ("▶", on_next, "Ход вперёд (→)"),
-            ("⏭", on_last, "К последнему ходу (End)"),
+            ("«", on_first, "К началу (Home)"),
+            ("‹", on_prev, "Ход назад (←)"),
+            ("›", on_next, "Ход вперёд (→)"),
+            ("»", on_last, "К последнему ходу (End)"),
         ):
             button = QPushButton(text)
             button.setToolTip(tip)

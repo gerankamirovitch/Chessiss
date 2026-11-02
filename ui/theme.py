@@ -147,7 +147,7 @@ def _stylesheet(t: Theme) -> str:
         padding: 16px; font-size: 13pt; font-weight: 600; text-align: left;
         background: {t.surface}; border-radius: 10px;
     }}
-    QTextBrowser, QTableWidget, QLineEdit, QComboBox, QSpinBox {{
+    QTextBrowser, QTableWidget, QLineEdit {{
         background: {t.surface}; border: 1px solid {t.border}; border-radius: 6px;
     }}
     QTableWidget {{ gridline-color: transparent; selection-background-color: {t.accent}; selection-color: {t.accent_text}; }}

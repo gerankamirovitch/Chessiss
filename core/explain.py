@@ -55,14 +55,18 @@ _TERM_RE = re.compile(r"\[\[([^|\]]+)\|([^\]]+)\]\]")
 
 
 def render_terms(raw: str, seen: set[str]) -> str:
-    """Expands [[shown text|term]]. Adds the definition on first use and records the term."""
+    """Expands [[shown text|term]]. Adds the definition on first use and records the term.
+    [[~shown|term]] is a sentence of its own that appears only that first time."""
 
     def replace(match: re.Match) -> str:
         shown, term = match.group(1), match.group(2)
+        once = shown.startswith("~")
+        if once:
+            shown = shown[1:]
         if term in seen:
-            return shown
+            return "" if once else shown
         seen.add(term)
-        return f"{shown} ({TERMS[term]})"
+        return f"{shown} ({TERMS[term]}). " if once else f"{shown} ({TERMS[term]})"
 
     return _TERM_RE.sub(replace, raw)
 
@@ -98,9 +102,9 @@ _MARK_GLYPHS = {
     Mark.BLUNDER: "??",
 }
 _MARK_TERMS = {
-    Mark.INACCURACY: "[[Неточность|неточность]]",
-    Mark.MISTAKE: "[[Ошибка|ошибка]]",
-    Mark.BLUNDER: "[[Зевок|зевок]]",
+    Mark.INACCURACY: "[[~Неточность|неточность]]",
+    Mark.MISTAKE: "[[~Ошибка|ошибка]]",
+    Mark.BLUNDER: "[[~Зевок|зевок]]",
 }
 
 
@@ -118,7 +122,8 @@ def classify(cp_loss: int) -> Mark:
 
 
 def pawns_text(cp: int) -> str:
-    return f"{abs(cp) / 100:.1f}".replace(".", ",")
+    tenths = (abs(cp) + 5) // 10
+    return f"{tenths // 10},{tenths % 10}"
 
 
 def centipawns_text(cp: int) -> str:
@@ -382,13 +387,14 @@ def _saves_motif(before: chess.Board, after: chess.Board, move: chess.Move, colo
         return None
     still = _threatened_pieces(after, color)
     if move.from_square in threatened and not still:
-        return Motif("saves", f"уводит {_piece_at_acc(before, move.from_square)} из-под удара")
+        name = _ACCUSATIVE[before.piece_type_at(move.from_square)]
+        return Motif("saves", f"уводит из-под удара {name} с {chess.square_name(move.from_square)}")
     for square in sorted(threatened, key=threatened.get, reverse=True):
         if square == move.from_square or square in still:
             continue
         if after.piece_at(square) == before.piece_at(square):
             was, pronoun = ("была", "её") if _is_feminine(before.piece_type_at(square)) else ("был", "его")
-            return Motif("saves", f"{_piece_at(before, square)} {was} под ударом, и этот ход {pronoun} защищает")
+            return Motif("saves", f"{_piece_at(before, square)} {was} под ударом, и этот ход {pronoun} спасает")
     return None
 
 
@@ -440,31 +446,64 @@ def _value(counts: dict[int, int]) -> int:
     return sum(PIECE_VALUES[piece] * count for piece, count in counts.items())
 
 
+def _names(piece_types: Sequence[int]) -> str:
+    """["ферзя"], ["коня и пешку"], ["две пешки"]: pieces in the accusative, biggest first."""
+    pieces = [p for p in sorted(set(piece_types), key=lambda p: -PIECE_VALUES[p]) if p != chess.PAWN]
+    parts = [_ACCUSATIVE[p] if piece_types.count(p) == 1 else _plural_pieces(p, piece_types.count(p)) for p in pieces]
+    pawns = piece_types.count(chess.PAWN)
+    if pawns:
+        parts.append(_plural_pieces(chess.PAWN, pawns) if pawns > 1 else _ACCUSATIVE[chess.PAWN])
+    return " и ".join(parts) if len(parts) <= 2 else ", ".join(parts[:-1]) + " и " + parts[-1]
+
+
+_PLURALS = {
+    chess.PAWN: "пешки",
+    chess.KNIGHT: "коня",
+    chess.BISHOP: "слона",
+    chess.ROOK: "ладьи",
+    chess.QUEEN: "ферзя",
+}
+_COUNT_WORDS = {2: ("два", "две"), 3: ("три", "три"), 4: ("четыре", "четыре")}
+
+
+def _plural_pieces(piece_type: int, count: int) -> str:
+    if count > 4:
+        return f"{count} " + ("пешек" if piece_type == chess.PAWN else "фигур")
+    masculine, feminine = _COUNT_WORDS[count]
+    return f"{feminine if _is_feminine(piece_type) else masculine} {_PLURALS[piece_type]}"
+
+
 @dataclass(frozen=True)
 class MaterialResult:
     net: int
+    won: tuple[int, ...] = ()  # piece types taken from the opponent, even trades cancelled
+    lost: tuple[int, ...] = ()
     wins_exchange: bool = False
+    exact: bool = True  # False when the pieces above do not tell the whole story
 
     @property
     def phrase(self) -> Optional[str]:
-        """What is won, in the accusative: "ходом выигрывает ___"."""
+        """What is won, in the accusative: "ход выигрывает ___"."""
+        if self.net <= 0:
+            return None
         if self.wins_exchange:
             return "[[качество|качество]]"
+        if self.exact and self.won:
+            if self.lost:
+                return f"{_names(self.won)} за {_names(self.lost)}"
+            return _names(self.won)
         if self.net >= 9:
             return "ферзя"
         if self.net >= 5:
             return "ладью"
         if self.net >= 3:
             return "фигуру"
-        if self.net == 2:
-            return "две пешки"
-        if self.net == 1:
-            return "пешку"
-        return None
+        return "две пешки" if self.net == 2 else "пешку"
 
 
-def material_along(board: chess.Board, moves: Iterable[chess.Move], color: bool, max_plies: int = 6) -> MaterialResult:
-    """Material change for `color` after playing a forcing line from `board`."""
+def material_along(board: chess.Board, moves: Iterable[chess.Move], color: bool, max_plies: int = 4) -> MaterialResult:
+    """Material change for `color` after a short line from `board`. Four plies cover a
+    tactic and its recapture. Beyond that an engine line stops being forced."""
     position = board.copy(stack=False)
     mine = _material(position, color)
     theirs = _material(position, not color)
@@ -478,13 +517,30 @@ def material_along(board: chess.Board, moves: Iterable[chess.Move], color: bool,
         pending = max(_threatened_pieces(position, color).values(), default=0)
     mine_after, theirs_after = _material(position, color), _material(position, not color)
     net = (_value(mine_after) - _value(mine)) - (_value(theirs_after) - _value(theirs)) - pending
-    lost_minor = (mine[chess.KNIGHT] + mine[chess.BISHOP]) - (mine_after[chess.KNIGHT] + mine_after[chess.BISHOP])
-    won_rook = theirs[chess.ROOK] - theirs_after[chess.ROOK]
-    exchange = won_rook == 1 and lost_minor == 1 and net in (1, 2, 3) and (
-        theirs[chess.QUEEN] == theirs_after[chess.QUEEN] and mine[chess.QUEEN] == mine_after[chess.QUEEN]
-        and mine[chess.ROOK] == mine_after[chess.ROOK]
+
+    won: list[int] = []
+    lost: list[int] = []
+    promoted = False
+    for piece in mine:
+        taken = theirs[piece] - theirs_after[piece]
+        given = mine[piece] - mine_after[piece]
+        promoted = promoted or given < 0 or taken < 0
+        balance = taken - given
+        won.extend([piece] * max(0, balance))
+        lost.extend([piece] * max(0, -balance))
+    exact = not promoted and pending == 0
+    exchange = (
+        exact and len(won) == 1 and won[0] == chess.ROOK
+        and len(lost) == 1 and lost[0] in (chess.KNIGHT, chess.BISHOP)
     )
-    return MaterialResult(net, exchange)
+    return MaterialResult(net, tuple(won), tuple(lost), exchange, exact)
+
+
+def _confirmed(board: chess.Board, score: Score, color: bool, material: MaterialResult) -> bool:
+    """An engine line is only its best guess. Claim a material win only if the evaluation,
+    counted from the material balance before the line, shows most of that win."""
+    balance = _value(_material(board, color)) - _value(_material(board, not color))
+    return score.for_color(color) - balance * 100 >= material.net * 60
 
 
 # --- explanation --------------------------------------------------------------
@@ -530,32 +586,33 @@ class MoveExplanation:
         return "\n".join(render_terms(line, seen) for line in self.raw_lines)
 
 
-def _reason_for(board: chess.Board, line: Line) -> tuple[str, list[str]]:
-    """Short clause on why the first move of an engine line is good."""
+def _reason_for(board: chess.Board, line: Line) -> tuple[str, bool]:
+    """Short clause on why the first move of an engine line is good, and whether
+    that clause is only general advice with no concrete tactic behind it."""
     move = line.move
     color = board.turn
     mate = line.score.mate_for(color)
     motifs = motifs_of_move(board, move)
-    kinds = [m.kind for m in motifs]
     if motifs and motifs[0].kind == "mate":
-        return "ставит мат", kinds
+        return "ставит мат", False
     if mate is not None and mate > 0:
-        return f"ведёт к мату в {_moves_text(mate)}", kinds
+        return f"ведёт к мату в {_moves_text(mate)}", False
     material = material_along(board, line.pv, color)
+    wins = material.phrase if material.phrase and _confirmed(board, line.score, color, material) else None
     tactical = [m for m in motifs if m.kind != "saves" and m.positive]
     if tactical:
         reason = tactical[0].clause
-        if material.phrase and material.net > 0 and tactical[0].kind in ("fork", "double_attack", "pin"):
-            reason += f", и в итоге выигрывает {material.phrase}"
-        return reason, kinds
-    if material.phrase and material.net > 0 and not _is_recapture(board, move):
-        return f"выигрывает {material.phrase}", kinds
+        if wins and tactical[0].kind in ("fork", "double_attack", "pin"):
+            reason += f", и в итоге выигрывает {wins}"
+        return reason, False
+    if wins and not _is_recapture(board, move):
+        return f"выигрывает {wins}", False
     saves = [m for m in motifs if m.kind == "saves"]
     if saves:
-        return saves[0].clause, kinds
+        return saves[0].clause, False
     if _stops_mate(board, move):
-        return "защищает от мата следующим ходом", kinds
-    return _generic_reason(board, move), kinds
+        return "защищает от мата следующим ходом", False
+    return _generic_reason(board, move), True
 
 
 def _stops_mate(board: chess.Board, move: chess.Move) -> bool:
@@ -571,7 +628,8 @@ def _stops_mate(board: chess.Board, move: chess.Move) -> bool:
     return not _mate_in_one_exists(after)
 
 
-_CENTER = {chess.D4, chess.E4, chess.D5, chess.E5}
+_CENTER = chess.SquareSet([chess.D4, chess.E4, chess.D5, chess.E5])
+_DATIVE = {chess.BISHOP: "слону", chess.ROOK: "ладье", chess.QUEEN: "ферзю"}
 
 
 def _generic_reason(board: chess.Board, move: chess.Move) -> str:
@@ -585,14 +643,28 @@ def _generic_reason(board: chess.Board, move: chess.Move) -> str:
         return "отыгрывает только что взятый материал"
     if board.is_capture(move):
         return "упрощает позицию разменом"
+    after = board.copy(stack=False)
+    after.push(move)
+    if see(after, move.to_square, not color) == 0:
+        for target in after.attacks(move.to_square) & after.occupied_co[not color]:
+            target_type = after.piece_type_at(target)
+            if target_type != chess.KING and PIECE_VALUES[target_type] > PIECE_VALUES[piece]:
+                return f"нападает на {_ACCUSATIVE[target_type]}"
     home_rank = 0 if color == chess.WHITE else 7
     if piece in (chess.KNIGHT, chess.BISHOP) and chess.square_rank(move.from_square) == home_rank:
         return f"вводит в игру {_ACCUSATIVE[piece]}"
-    if piece == chess.PAWN and move.to_square in _CENTER:
-        return "пешка занимает центр"
+    if piece == chess.PAWN:
+        if move.to_square in _CENTER:
+            return "пешка занимает центр"
+        if after.attacks(move.to_square) & _CENTER:
+            return "пешка борется за центр"
+    for slider in (chess.BISHOP, chess.QUEEN, chess.ROOK):
+        for square in after.pieces(slider, color):
+            if square != move.to_square and len(after.attacks(square)) > len(board.attacks(square)):
+                return f"открывает дорогу {_DATIVE[slider]}"
     if move.to_square in _CENTER:
         return f"ставит {_ACCUSATIVE[piece]} в центр"
-    return "движок считает его самым полезным в этой позиции"
+    return "по расчёту движка он сильнее других"
 
 
 def explain_move(
@@ -613,28 +685,43 @@ def explain_move(
     lines: list[str] = []
     outcome = outcome_of(after)
     if outcome is not None and outcome.winner is not None:
-        lines.append(f"{ru_san(san)}: мат, партия окончена.")
+        lines.append("Мат, партия окончена.")
         return MoveExplanation(san, color, score, 0, Mark.EXCELLENT, True, None, None, ["mate"], lines)
 
-    lines.append(_verdict(board, move, san, best, score, is_best, cp_loss, mark, after_line, color))
+    verdict = _verdict(board, move, best, score, is_best, cp_loss, mark, after_line, color)
+    lines.append(verdict)
     if cp_loss < 100:
-        for motif in motifs[:2]:
-            if motif.positive and motif.kind != "wins_hanging":
-                lines.append(_sentence(motif.clause) + ".")
+        shown = 0
+        for motif in motifs:
+            if not motif.positive or shown == 2:
+                continue
+            if motif.kind == "saves" and board.is_capture(move):
+                continue  # taking the attacker is explained by the capture itself
+            if motif.kind == "wins_hanging" and "выигрывает" in verdict:
+                continue
+            lines.append(_sentence(motif.clause) + ".")
+            shown += 1
 
+    refuted = False
     if cp_loss >= 50:
         hanging = _hanging_motif(after, color)
         if hanging is not None:
             lines.append(_sentence(hanging.clause) + ".")
         if after_line is not None:
-            lines.extend(_refutation(after, after_line, color))
+            refutation = _refutation(after, after_line, color, cp_loss)
+            lines.extend(refutation)
+            refuted = bool(refutation)
 
     if not is_best and cp_loss > 10:
-        reason, _ = _reason_for(board, best)
-        best_san = board.san(best.move)
-        lines.append(
-            f"Лучше был ход {ru_san(best_san)} (сильнее на {centipawns_text(cp_loss)}): {reason}."
-        )
+        reason, is_general = _reason_for(board, best)
+        if is_general and cp_loss >= 100 and refuted:
+            reason = "он не даёт сопернику такой возможности"
+        best_san = ru_san(board.san(best.move))
+        # With a mate on either side the centipawn gap is only the clamp, not a measurement.
+        if best.score.mate is None and score.mate is None:
+            lines.append(f"Лучше был ход {best_san} (сильнее на {centipawns_text(cp_loss)}): {reason}.")
+        else:
+            lines.append(f"Лучше был ход {best_san}: {reason}.")
     lines.append(position_text(score))
 
     best_san_final = None if is_best else board.san(best.move)
@@ -645,21 +732,23 @@ def explain_move(
 
 
 def _verdict(
-    board: chess.Board, move: chess.Move, san: str, best: Line, score: Score,
+    board: chess.Board, move: chess.Move, best: Line, score: Score,
     is_best: bool, cp_loss: int, mark: Mark, after_line: Optional[Line], color: bool,
 ) -> str:
-    shown = ru_san(san)
-    prefix = f"{shown}: {_MARK_TERMS[mark]}. " if mark in _MARK_TERMS else f"{shown}: "
+    prefix = _MARK_TERMS.get(mark, "")
     mate = score.mate_for(color)
     if cp_loss > 10 and mate is not None and mate < 0:
         return f"{prefix}Ход допускает мат в {_moves_text(-mate)}."
+    missed = best.score.mate_for(color)
+    if cp_loss > 10 and missed is not None and missed > 0:
+        return f"{prefix}Ход упускает мат в {_moves_text(missed)}."
     if cp_loss > 10:
-        return f"{prefix}Ход ослабил позицию на {pawns_text(cp_loss)} пешки ({centipawns_text(cp_loss)})."
+        return f"{prefix}Ход ослабил позицию на {pawns_text(cp_loss)} пешки, это {centipawns_text(cp_loss)}."
     if after_line is not None:
         material = material_along(board, (move, *after_line.pv), color)
-        if material.phrase and material.net > 0:
-            if _is_recapture(board, move):
-                return f"{prefix}Ход отыгрывает взятый материал."
+        if material.phrase and _is_recapture(board, move):
+            return f"{prefix}Ход отыгрывает взятый материал."
+        if material.phrase and _confirmed(board, score, color, material):
             return f"{prefix}Ход выигрывает {material.phrase}."
     if mate is not None and mate > 0:
         return f"{prefix}Ход ведёт к мату в {_moves_text(mate)}."
@@ -668,7 +757,7 @@ def _verdict(
     return f"{prefix}Ход ничего не меняет в оценке позиции."
 
 
-def _refutation(after: chess.Board, line: Line, color: bool) -> list[str]:
+def _refutation(after: chess.Board, line: Line, color: bool, cp_loss: int) -> list[str]:
     """What the opponent does next, stated as a consequence."""
     reply = line.move
     if reply not in after.legal_moves:
@@ -681,9 +770,11 @@ def _refutation(after: chess.Board, line: Line, color: bool) -> list[str]:
             return [f"Соперник отвечает {reply_san.rstrip('#')} и ставит мат."]
         return [f"Соперник отвечает {reply_san} и ставит мат в {_moves_text(mate)}."]
     material = material_along(after, line.pv, opponent)
-    if material.phrase and material.net > 0:
+    if material.phrase and _confirmed(after, line.score, opponent, material):
         return [f"Соперник отвечает {reply_san} и выигрывает {material.phrase}."]
-    return [f"Сильный ответ соперника: {reply_san}."]
+    if cp_loss >= 100:
+        return [f"Сильный ответ соперника: {reply_san}."]
+    return []
 
 
 # --- hints --------------------------------------------------------------------
@@ -696,9 +787,9 @@ class Hint:
     score: Score
     reason: str
 
-    @property
-    def text(self) -> str:
-        return f"{ru_san(self.san)}: {self.reason}."
+    def render(self, seen: set[str]) -> str:
+        """Final text. `seen` tracks explained terms and is updated in place."""
+        return f"{ru_san(self.san)}: {render_terms(self.reason, seen)}."
 
 
 def build_hints(board: chess.Board, lines: Sequence[Line], limit: int = 3, margin_cp: int = 150) -> list[Hint]:

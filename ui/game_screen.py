@@ -364,6 +364,8 @@ class GameScreen(QWidget):
         if at_latest and session.mode == Mode.AI and self._view_ply >= 2:
             plies = [self._view_ply - 1, self._view_ply]
         blocks = []
+        if self._hint_text and at_latest:
+            blocks.append(ExplanationBlock("Подсказка", self._hint_text))
         for ply in plies:
             if ply <= 0:
                 continue
@@ -378,8 +380,6 @@ class GameScreen(QWidget):
                     blocks[-1].text = "Объяснений нет: Stockfish недоступен."
             else:
                 blocks.append(ExplanationBlock(title, comment[0], comment[1]))
-        if self._hint_text and at_latest:
-            blocks.append(ExplanationBlock("Подсказка", self._hint_text))
         if not blocks:
             self.coach.show_text(
                 "Здесь после каждого хода появится разбор: что он изменил в оценке, "
@@ -555,7 +555,10 @@ class GameScreen(QWidget):
         def done(hints: list[Hint]) -> None:
             if self.session is not session or session.ply_count != ply:
                 return
-            self._hint_text = "\n".join(h.text for h in hints) or "Вариантов нет."
+            before = len(self._seen_terms)
+            self._hint_text = "\n".join(h.render(self._seen_terms) for h in hints) or "Вариантов нет."
+            if len(self._seen_terms) != before:
+                self.db.save_seen_terms(self._seen_terms)
             self.board.set_arrows(
                 (h.move.from_square, h.move.to_square, 1.0 - index * 0.3) for index, h in enumerate(hints)
             )

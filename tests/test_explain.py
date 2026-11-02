@@ -14,8 +14,11 @@ from core.explain import (
     material_along,
     motifs_of_move,
     position_text,
+    pawns_text,
     render_terms,
     see,
+    _generic_reason,
+    _names,
 )
 
 
@@ -156,16 +159,52 @@ def test_taking_a_defended_piece_is_not_winning_a_hanging_piece():
 def test_moving_an_attacked_piece_away():
     motifs = motifs_of_move(chess.Board("4k3/8/8/4r3/8/8/4N3/6K1 w - - 0 1"), chess.Move.from_uci("e2c3"))
     saves = next(m for m in motifs if m.kind == "saves")
-    assert "уводит коня на e2" in saves.clause
+    assert saves.clause == "уводит из-под удара коня с e2"
 
 
 def test_defending_an_attacked_piece():
     motifs = motifs_of_move(chess.Board("4k3/8/8/4r3/8/8/4N3/R5K1 w - - 0 1"), chess.Move.from_uci("a1e1"))
     saves = next(m for m in motifs if m.kind == "saves")
-    assert saves.clause == "конь на e2 был под ударом, и этот ход его защищает"
+    assert saves.clause == "конь на e2 был под ударом, и этот ход его спасает"
 
 
 # --- material ---
+
+def test_material_names_the_real_pieces_of_a_trade():
+    # The bug this pins: knight takes queen, pawn takes knight was called "wins a rook".
+    board = chess.Board("4k3/1p6/2q5/8/3N4/8/8/4K3 w - - 0 1")
+    moves = [chess.Move.from_uci(u) for u in ("d4c6", "b7c6")]
+    result = material_along(board, moves, chess.WHITE)
+    assert result.net == 6
+    assert result.phrase == "ферзя за коня"
+
+
+def test_material_two_pawns_and_mixed_gains():
+    board = chess.Board("4k3/8/8/2n1p3/3P4/8/8/4K3 w - - 0 1")
+    assert material_along(board, [chess.Move.from_uci("d4c5")], chess.WHITE).phrase == "коня"
+    assert _names((chess.PAWN, chess.PAWN)) == "две пешки"
+    assert _names((chess.KNIGHT, chess.PAWN)) == "коня и пешку"
+    assert _names((chess.ROOK, chess.ROOK)) == "две ладьи"
+    assert _names((chess.QUEEN, chess.KNIGHT, chess.PAWN)) == "ферзя, коня и пешку"
+
+
+def test_capture_past_the_ply_limit_does_not_count():
+    board = chess.Board("4k3/8/8/4p3/8/4K3/8/8 w - - 0 1")
+    moves = [chess.Move.from_uci(u) for u in ("e3e4", "e8e7", "e4e5")]
+    assert material_along(board, moves, chess.WHITE, max_plies=2).net == 0
+    assert material_along(board, moves, chess.WHITE, max_plies=4).net == 1
+
+
+def test_material_claim_needs_the_evaluation_to_agree():
+    # The line takes a knight, but the evaluation shows no such gain.
+    board = chess.Board("4k3/8/8/4n3/8/8/4R3/4K3 w - - 0 1")
+    move = chess.Move.from_uci("e2e5")
+    agrees = explain_move(board, move, line(600, "e2e5"), line(600, "e8d7"))
+    disagrees = explain_move(board, move, line(100, "e2e5"), line(100, "e8d7"))
+    assert "Ход выигрывает коня." in agrees.render(set())
+    assert "Ход выигрывает коня." not in disagrees.render(set())
+    assert "Забирает коня" in disagrees.render(set()), "the capture itself is still a fact"
+
 
 def test_material_winning_a_queen():
     board = chess.Board("4k3/8/8/4q3/8/8/4R3/4K3 w - - 0 1")
@@ -220,7 +259,7 @@ def test_loss_is_stated_in_pawns_centipawns_and_with_better_move():
     assert "Лучше был ход Кc3" in text
     assert "из-под удара" in text, "the reason for the better move"
     assert "Конь на e2 остаётся под ударом, защиты нет." in text
-    assert "Соперник отвечает Лxe2 и выигрывает фигуру." in text
+    assert "Соперник отвечает Лxe2 и выигрывает коня." in text
     assert explanation.best_san == "Nc3"
 
 
@@ -229,7 +268,7 @@ def test_feminine_pieces_agree_in_gender():
     saves = next(
         m for m in motifs_of_move(board, chess.Move.from_uci("a1a3")) if m.kind == "saves"
     )
-    assert saves.clause == "ладья на c3 была под ударом, и этот ход её защищает"
+    assert saves.clause == "ладья на c3 была под ударом, и этот ход её спасает"
     hanging = explain_move(board, chess.Move.from_uci("g1h1"), line(-100, "c3c5"), line(-400, "e5c3"))
     assert "Ладья на c3 остаётся под ударом" in hanging.render(set())
 
@@ -251,7 +290,7 @@ def test_checkmating_move():
     board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")
     explanation = explain_move(board, chess.Move.from_uci("h5f7"), line(EVAL_CLAMP, "h5f7", mate=1), None)
     assert explanation.score.cp == EVAL_CLAMP
-    assert "мат" in explanation.render(set())
+    assert explanation.render(set()) == "Мат, партия окончена."
 
 
 def test_stalemate_blunder_evaluated_as_zero():
@@ -270,13 +309,32 @@ def test_blunder_allowing_mate_names_the_mating_reply():
     text = explanation.render(set())
     assert "Соперник отвечает Лd8 и ставит мат." in text
     assert "Ход допускает мат в 1 ход." in text
+    assert "сантипеш" not in text, "the clamped gap to a mate is not a real number"
     assert "защищает от мата" in text, "why g6 was better"
+
+
+def test_missed_mate_is_named():
+    board = chess.Board("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4")
+    explanation = explain_move(
+        board, chess.Move.from_uci("a2a3"), line(EVAL_CLAMP, "h5f7", mate=1), line(100, "g7g6"),
+    )
+    text = explanation.render(set())
+    assert "Ход упускает мат в 1 ход." in text
+    assert "Лучше был ход Фxf7#: ставит мат." in text
+
+
+def test_mark_word_is_only_written_while_it_is_new():
+    board = chess.Board("4k3/8/8/4r3/8/8/4N3/6K1 w - - 0 1")
+    explanation = explain_move(board, chess.Move.from_uci("g1h1"), line(-200, "e2c3"), line(-500, "e5e2"))
+    seen = set()
+    assert explanation.render(seen).startswith("Зевок (ход хуже лучшего")
+    assert explanation.render(seen).startswith("Ход ослабил позицию")
 
 
 def test_move_winning_material_says_so():
     board = chess.Board("4k3/8/8/4n3/8/8/4R3/4K3 w - - 0 1")
     explanation = explain_move(board, chess.Move.from_uci("e2e5"), line(600, "e2e5"), line(600, "e8d7"))
-    assert "выигрывает фигуру" in explanation.render(set())
+    assert "Ход выигрывает коня." in explanation.render(set())
 
 
 def test_recapture_is_not_called_winning_a_piece():
@@ -286,6 +344,22 @@ def test_recapture_is_not_called_winning_a_piece():
     text = explanation.render(set())
     assert "отыгрывает" in text
     assert "выигрывает" not in text
+
+
+@pytest.mark.parametrize(
+    "fen,uci,reason",
+    [
+        ("r1bqk2r/pppp1ppp/2n2n2/4p3/1bB1P3/2N2N2/PPPP1PPP/R1BQK2R w KQkq - 0 1", "e1g1", "короля в безопасное"),
+        (chess.STARTING_FEN, "g1f3", "вводит в игру коня"),
+        (chess.STARTING_FEN, "e2e4", "пешка занимает центр"),
+        (chess.STARTING_FEN, "c2c4", "пешка борется за центр"),
+        (chess.STARTING_FEN, "g2g3", "открывает дорогу слону"),
+        ("4k3/8/8/4q3/8/8/3N4/4K3 w - - 0 1", "d2f3", "нападает на ферзя"),
+        ("4k3/8/8/8/8/8/8/R3K3 w Q - 0 1", "a1a2", "по расчёту движка"),
+    ],
+)
+def test_general_reasons_state_something_true_about_the_move(fen, uci, reason):
+    assert reason in _generic_reason(chess.Board(fen), chess.Move.from_uci(uci))
 
 
 def test_position_text():
@@ -302,6 +376,7 @@ def test_position_text():
      (21, "сантипешка"), (100, "сантипешек"), (101, "сантипешка"), (150, "сантипешек"), (112, "сантипешек")],
 )
 def test_centipawn_plural(cp, word):
+    assert pawns_text(15) == "0,2" and pawns_text(378) == "3,8" and pawns_text(-1000) == "10,0"
     assert f"{cp} [[{word}|" in centipawns_text(cp)
 
 
@@ -340,7 +415,11 @@ def test_hints_give_reasons_and_drop_bad_candidates():
     )
     assert [h.san.rstrip("+") for h in hints] == ["Nc7", "Nd6"]
     assert "вилка" in hints[0].reason
-    assert hints[0].text.startswith("Кc7")
+    seen = set()
+    text = hints[0].render(seen)
+    assert text.startswith("Кc7")
+    assert "[[" not in text and "нападает сразу на две" in text, "terms are expanded in hints too"
+    assert "вилка" in seen
 
 
 def test_hints_handle_empty_lines():
