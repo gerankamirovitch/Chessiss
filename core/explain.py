@@ -91,7 +91,7 @@ _MARK_LABELS = {
     Mark.BLUNDER: "Зевок",
 }
 _MARK_GLYPHS = {
-    Mark.EXCELLENT: "!",
+    Mark.EXCELLENT: "",
     Mark.GOOD: "",
     Mark.INACCURACY: "?!",
     Mark.MISTAKE: "?",

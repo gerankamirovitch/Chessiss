@@ -1,7 +1,7 @@
 import chess
 import pytest
 
-from core.clock import PRESETS, UNTIMED, ChessClock, TimeControl, format_clock
+from core.clock import PRESETS, UNTIMED, ChessClock, TimeControl, format_clock, storage_key_from_pgn_tag
 from core.game import GameSession, GameSetup, Mode, Termination
 
 
@@ -116,3 +116,11 @@ def test_storage_key_round_trip():
 )
 def test_format_clock(ms, text):
     assert format_clock(ms) == text
+
+
+@pytest.mark.parametrize(
+    "tag,key",
+    [("300+3", "5+3"), ("600", "10+0"), ("90+30", "-"), ("-", "-"), ("?", "-"), ("", "-"), ("0", "-")],
+)
+def test_storage_key_from_pgn_tag(tag, key):
+    assert storage_key_from_pgn_tag(tag) == key

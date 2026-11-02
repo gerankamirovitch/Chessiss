@@ -46,6 +46,18 @@ class TimeControl:
         return cls(int(minutes), int(increment))
 
 
+def storage_key_from_pgn_tag(tag: str) -> str:
+    """"300+3" -> "5+3". "-" when the tag is absent or not in whole minutes."""
+    try:
+        seconds, _, increment = tag.partition("+")
+        minutes, rest = divmod(int(seconds), 60)
+        if rest or minutes <= 0:
+            return "-"
+        return f"{minutes}+{int(increment or 0)}"
+    except ValueError:
+        return "-"
+
+
 UNTIMED = TimeControl(0, 0, "Тренировка")
 
 PRESETS: tuple[TimeControl, ...] = (
