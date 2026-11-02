@@ -196,8 +196,19 @@ class MainWindow(QMainWindow):
 
     def new_game(self, mode: Mode) -> None:
         if mode == Mode.AI and not self.engine.available:
+            self.engine.warm_up()  # the binary may be back: the next attempt can succeed
             QMessageBox.warning(self, "Stockfish", self.engine.message)
             return
+        if self.db.get_json(ACTIVE_GAME_KEY) is not None:
+            answer = QMessageBox.question(
+                self, "Новая партия",
+                "Есть прерванная партия. Если начать новую, продолжить её будет нельзя: "
+                "она останется в истории как незавершённая. Начать новую?",
+            )
+            if answer != QMessageBox.Yes:
+                return
+            self.db.delete_setting(ACTIVE_GAME_KEY)
+            self.refresh_home()
         dialog = NewGameDialog(
             mode,
             int(self.db.get_setting("ai_level")),

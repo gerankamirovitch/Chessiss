@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 import chess
@@ -89,10 +90,18 @@ def answers_yes(monkeypatch):
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
 
 
-@pytest.fixture
+@pytest.fixture(autouse=True)
 def warnings(monkeypatch):
+    """Records warnings. A real modal dialog would hang the run, since nobody can close it."""
+
+    def unexpected(*args, **kwargs):
+        raise AssertionError(f"unexpected modal dialog: {args[1:3]}")
+
     seen = []
     monkeypatch.setattr(QMessageBox, "warning", lambda parent, title, text, *a: seen.append(text))
+    monkeypatch.setattr(QMessageBox, "question", unexpected)
+    monkeypatch.setattr(QMessageBox, "information", unexpected)
+    monkeypatch.setattr(NewGameDialog, "exec", unexpected)
     return seen
 
 
@@ -278,10 +287,24 @@ def test_board_paints_with_every_overlay(board_widget):
     assert len(colors) > 10, "pieces, squares and overlays are all visible"
 
 
-def test_keeps_rendering_at_high_dpi(board_widget):
-    widget, _ = board_widget
-    pixmap = widget._piece_pixmap("K")
-    assert pixmap.width() == int(widget._square_size() * widget.devicePixelRatioF())
+def test_pieces_and_squares_use_device_pixels_at_200_percent():
+    code = (
+        "import chess\n"
+        "from PySide6.QtWidgets import QApplication\n"
+        "from ui.board_widget import BoardWidget\n"
+        "app = QApplication([])\n"
+        "w = BoardWidget(); w.resize(400, 400); w.show(); app.processEvents()\n"
+        "assert w.devicePixelRatioF() == 2.0, w.devicePixelRatioF()\n"
+        "size = w._square_size()\n"
+        "assert size == 50, size\n"
+        "assert w._piece_pixmap('K').width() == 100, w._piece_pixmap('K').width()\n"
+        "assert w._background_pixmap().width() == 800, w._background_pixmap().width()\n"
+        "image = w.grab().toImage()\n"
+        "assert image.width() == 800, image.width()\n"
+    )
+    env = dict(os.environ, QT_SCALE_FACTOR="2", QT_QPA_PLATFORM="offscreen")
+    done = subprocess.run([sys.executable, "-c", code], cwd=ROOT, env=env, capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
 
 
 # --- local game --------------------------------------------------------------
@@ -1061,7 +1084,13 @@ def test_all_screens_render_in_both_themes(no_engine):
         for index in range(h.window.stack.count()):
             h.window.stack.setCurrentIndex(index)
             QApplication.processEvents()
-            assert not h.window.grab().toImage().isNull()
+            image = h.window.grab().toImage()
+            colors = {
+                image.pixelColor(x, y).name()
+                for x in range(0, image.width(), 9)
+                for y in range(0, image.height(), 9)
+            }
+            assert len(colors) >= 4, f"screen {index} in the {theme} theme looks blank: {colors}"
 
 
 def test_real_time_flag_through_the_screen_timer(no_engine):
@@ -1075,3 +1104,150 @@ def test_real_time_flag_through_the_screen_timer(no_engine):
     assert 0.39 <= elapsed <= 0.6, f"flagged after {elapsed:.3f}s"
     assert session.outcome.result == "0-1"
     assert h.db.get_game(session.game_id).result == "0-1"
+
+
+# --- findings of the independent review ---------------------------------------
+
+def test_undo_after_engine_failure_gives_the_move_back_to_the_human(app, stockfish_path, tmp_path):
+    h = Harness(app)
+    try:
+        h.engine.warm_up()
+        assert wait_until(lambda: h.engine._analysis is not None)
+        h.game.start_game(ai_setup(control=TimeControl(5)))
+        h.engine._play_pool.submit(h.engine._drop_play).result()
+        h.engine._custom_path = str(tmp_path / "gone.exe")
+        play(h.game, "e2e4")
+        assert wait_until(lambda: h.game._ai_error)
+        h.engine._custom_path = str(stockfish_path)
+        h.game._on_undo()
+        assert not h.game._ai_error
+        assert h.game.board._interactive == {chess.WHITE}, "the board is not frozen"
+        assert h.game.session.clock.running_color == chess.WHITE
+        assert not h.game.retry_button.isVisibleTo(h.game)
+        h.game._on_retry_ai()  # a stale click does nothing on the human's turn
+        assert h.game._ai_ticket is None
+        play(h.game, "d2d4")
+        assert wait_until(lambda: h.game.session.ply_count == 2, 15)
+    finally:
+        h.close()
+
+
+def test_finishing_another_game_keeps_the_interrupted_one_resumable(no_engine, answers_yes):
+    h = no_engine
+    h.game.start_game(local_setup())
+    play(h.game, "e2e4")
+    interrupted = h.game.session.game_id
+    h.game._on_back()
+    h.game.start_game(local_setup())
+    h.game._on_resign()  # a second game, resigned at ply 0
+    assert h.db.get_json(ACTIVE_GAME_KEY)["game_id"] == interrupted
+    h.window.show_home()
+    assert h.window.home.resume_button.isVisibleTo(h.window.home)
+
+
+def test_finishing_the_active_game_clears_resume(no_engine, answers_yes):
+    h = no_engine
+    h.game.start_game(local_setup())
+    play(h.game, "e2e4")
+    h.game._on_resign()
+    assert h.db.get_json(ACTIVE_GAME_KEY) is None
+
+
+@pytest.mark.parametrize("answer,keeps", [(QMessageBox.No, True), (QMessageBox.Yes, False)])
+def test_new_game_asks_before_dropping_an_interrupted_one(no_engine, monkeypatch, answer, keeps):
+    h = no_engine
+    h.game.start_game(local_setup())
+    play(h.game, "e2e4")
+    h.game._on_back()
+    monkeypatch.setattr(NewGameDialog, "exec", lambda self: QDialog.Accepted)
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: answer)
+    h.window.new_game(Mode.LOCAL)
+    assert (h.db.get_json(ACTIVE_GAME_KEY) is not None) == keeps
+    assert (h.window.stack.currentWidget() is h.window.home) == keeps
+
+
+def test_explanation_cancelled_by_leaving_is_requested_again_on_resume(app, stockfish_path):
+    first = Harness(app)
+    first.game.start_game(local_setup())
+    play(first.game, "e2e4")
+    first.close()  # at once, before the explanation can arrive
+    second = Harness(app)
+    try:
+        second.window.resume_game()
+        assert wait_until(lambda: 1 in second.game._comments, 15)
+        assert "Считаю" not in second.game.coach.toPlainText()
+        assert second.db.get_moves(second.game.session.game_id)[0].comment
+    finally:
+        second.close()
+
+
+def test_hint_for_an_old_position_is_dropped(harness):
+    h = harness
+    h.game.start_game(local_setup())
+    play(h.game, "e2e4")
+    h.game._on_hint()
+    h.game._on_undo()
+    play(h.game, "d2d4")  # the same ply count as when the hint was asked, another position
+    wait_until(lambda: False, 1.5)
+    assert h.game.board._arrows == []
+
+
+def test_hint_arriving_after_resignation_draws_nothing(harness, answers_yes):
+    h = harness
+    h.game.start_game(local_setup())
+    h.game._on_hint()
+    h.game._on_resign()
+    wait_until(lambda: False, 1.5)
+    assert h.game.board._arrows == []
+    assert "Подсказка" not in h.game.coach.toPlainText()
+
+
+def test_pgn_with_bad_fen_gives_a_message_not_an_internal_error(no_engine, tmp_path, warnings):
+    screen = no_engine.window.analysis_screen
+    text = '[White "A"]\n[FEN "not a fen"]\n[SetUp "1"]\n\n1. e4 *\n'
+    assert screen.open_file(write_pgn(tmp_path, text)) is False
+    assert "нет ни одной партии" in warnings[0]
+
+
+def test_review_of_a_game_played_past_threefold_has_no_false_blunders(harness, tmp_path):
+    text = (
+        '[White "A"]\n[Black "B"]\n[Result "1-0"]\n[SetUp "1"]\n[FEN "7k/8/8/8/8/8/R7/K7 w - - 0 1"]\n\n'
+        "1. Rb2 Kg8 2. Ra2 Kh8 3. Rb2 Kg8 4. Ra2 Kh8 5. Ra8+ Kg7 1-0\n"
+    )
+    screen = harness.window.analysis_screen
+    screen.open_file(write_pgn(tmp_path, text))
+    screen.start_review()
+    assert wait_until(lambda: screen._ticket is None, 60)
+    black_marks = [screen._marks[ply] for ply in range(2, 11, 2)]
+    assert Mark.BLUNDER not in black_marks, "black's king shuffle loses nothing"
+    assert screen._evals[8] > 300, "the position after the third occurrence is still winning for white"
+
+
+def test_pgn_with_an_impossible_position_never_reaches_the_engine(harness, tmp_path, warnings):
+    text = '[White "A"]\n[SetUp "1"]\n[FEN "7k/8/8/8/8/8/1Q6/K7 w - - 0 1"]\n\n1. Qc2 *\n'
+    screen = harness.window.analysis_screen
+    assert screen.open_file(write_pgn(tmp_path, text)) is False
+    assert "нет ни одной партии" in warnings[0]
+
+
+def test_unknown_result_is_not_shown_as_a_black_win(no_engine):
+    from ui.history_screen import result_text
+
+    db = no_engine.db
+    game_id = db.create_game(datetime(2026, 1, 1), "import", None, "-", "?", '[Result "?"]\n\n*')
+    assert result_text(db.get_game(game_id)) == "не завершена"
+
+
+def test_failed_engine_is_retried_when_it_comes_back(app, stockfish_path, tmp_path, warnings):
+    h = Harness(app)
+    try:
+        h.engine.set_custom_path(str(tmp_path / "gone.exe"))
+        assert wait_until(lambda: not h.engine.available)
+        h.window.new_game(Mode.AI)
+        assert warnings
+        h.engine._custom_path = str(stockfish_path)
+        h.engine.warm_up()
+        assert wait_until(lambda: h.engine.available)
+        assert not h.window.home.engine_warning.isVisibleTo(h.window.home)
+    finally:
+        h.close()

@@ -56,12 +56,14 @@ class Analyzer:
     def top_line(self, board: chess.Board) -> Line:
         return self.lines(board)[0]
 
-    def explain(self, board: chess.Board, move: chess.Move) -> MoveExplanation:
+    def explain(self, board: chess.Board, move: chess.Move, game_continues: bool = False) -> MoveExplanation:
+        """`game_continues`: the record has more moves after this one, so a repetition
+        or the 50-move rule was not claimed here and the position is still being played."""
         best = self.top_line(board)
         after = board.copy()
         after.push(move)
-        after_line = None if outcome_of(after) is not None else self.top_line(after)
-        return explain_move(board, move, best, after_line)
+        final = after.outcome() is not None if game_continues else outcome_of(after) is not None
+        return explain_move(board, move, best, None if final else self.top_line(after))
 
     def hints(self, board: chess.Board, count: int = 3) -> list[Hint]:
         return build_hints(board, self.lines(board, multipv=count), limit=count)
@@ -86,7 +88,7 @@ def review_game(
         if should_stop is not None and should_stop():
             review.complete = False
             return review
-        review.explanations.append(analyzer.explain(board, move))
+        review.explanations.append(analyzer.explain(board, move, game_continues=index < len(moves) - 1))
         board.push(move)
         if on_progress is not None:
             on_progress(index + 1, len(moves))

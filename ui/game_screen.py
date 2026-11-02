@@ -184,7 +184,20 @@ class GameScreen(QWidget):
         self._comments = comments
         for ply, (_, mark) in comments.items():
             self.moves.set_mark(ply, mark)
+        self._explain_missing()
         self._refresh_all(animate=False)
+
+    def _explain_missing(self) -> None:
+        """Moves whose explanation was cancelled when the game was left mid-calculation."""
+        session = self.session
+        board = chess.Board(session.start_fen)
+        for ply, move in enumerate(session.moves, 1):
+            if ply not in self._comments:
+                self._request_explanation(PlayedMove(
+                    move, board.san(move), ply, board.turn,
+                    board.is_capture(move), board.gives_check(move), board.copy(),
+                ))
+            board.push(move)
 
     def _begin(self, session: GameSession) -> None:
         self._timer.stop()
@@ -260,6 +273,7 @@ class GameScreen(QWidget):
     # --- AI ------------------------------------------------------------------
 
     def _request_ai_move(self) -> None:
+        self._cancel_ai()
         session = self.session
         color = session.board.turn
         remaining = None if session.setup.time_control.untimed else session.clock.remaining_ms(color)
@@ -311,7 +325,7 @@ class GameScreen(QWidget):
 
     def _on_retry_ai(self) -> None:
         session = self.session
-        if session is None or session.is_over or not self._ai_error:
+        if session is None or session.is_over or not self._ai_error or not session.is_ai_turn:
             return
         session.clock.start(session.board.turn)
         self._request_ai_move()
@@ -413,16 +427,20 @@ class GameScreen(QWidget):
     def _persist_move(self, played: PlayedMove) -> None:
         session = self.session
         game_id = self._ensure_game_row()
-        self.db.add_move(game_id, played.ply, played.san)
-        self.db.update_game(game_id, session.outcome.result if session.outcome else "*", session_to_pgn(session))
-        self._save_active_state()
+        result = session.outcome.result if session.outcome else "*"
+        self.db.record_move(game_id, played.ply, played.san, result, session_to_pgn(session), self._active_state())
 
     def _save_active_state(self) -> None:
+        state = self._active_state()
+        if state is not None:
+            self.db.set_json(ACTIVE_GAME_KEY, state)
+
+    def _active_state(self) -> Optional[dict]:
         session = self.session
         if session is None or session.is_over or session.game_id is None:
-            return
+            return None
         white_ms, black_ms = session.clock.snapshot()
-        self.db.set_json(ACTIVE_GAME_KEY, {
+        return {
             "game_id": session.game_id,
             "mode": session.mode.value,
             "player_color": COLOR_NAMES[session.setup.player_color] if session.setup.player_color is not None else None,
@@ -432,7 +450,7 @@ class GameScreen(QWidget):
             "black_ms": black_ms,
             "start_fen": session.start_fen,
             "color_choice": self._color_choice,
-        })
+        }
 
     def save_and_leave(self) -> None:
         """Called when leaving the screen or closing the window mid-game."""
@@ -451,7 +469,11 @@ class GameScreen(QWidget):
         self._cancel_ai()
         game_id = self._ensure_game_row()
         self.db.update_game(game_id, session.outcome.result, session_to_pgn(session))
-        self.db.delete_setting(ACTIVE_GAME_KEY)
+        active = self.db.get_json(ACTIVE_GAME_KEY)
+        if active and active.get("game_id") == game_id:  # another interrupted game stays resumable
+            self.db.delete_setting(ACTIVE_GAME_KEY)
+        self._hint_text = ""
+        self.board.set_arrows([])
         self.sound.play("end")
         self._view_ply = session.ply_count
         self._refresh_all(animate=False)
@@ -515,6 +537,9 @@ class GameScreen(QWidget):
         self._cancel_ai()
         removed_from = session.ply_count - size + 1
         session.undo()
+        if self._ai_error:  # the engine failure stopped the clock while it was the AI's turn
+            self._ai_error = False
+            session.clock.start(session.board.turn)
         self.moves.pop_moves(size)
         for ply in range(removed_from, removed_from + size):
             self._comments.pop(ply, None)
@@ -550,10 +575,10 @@ class GameScreen(QWidget):
         self.hint_button.setEnabled(False)
         self._hint_text = "Считаю…"
         self._refresh_coach()
-        ply = session.ply_count
+        position = session.fen
 
         def done(hints: list[Hint]) -> None:
-            if self.session is not session or session.ply_count != ply:
+            if self.session is not session or session.is_over or session.fen != position:
                 return
             before = len(self._seen_terms)
             self._hint_text = "\n".join(h.render(self._seen_terms) for h in hints) or "Вариантов нет."
@@ -566,7 +591,7 @@ class GameScreen(QWidget):
             self._refresh_controls()
 
         def failed(message: str) -> None:
-            if self.session is session:
+            if self.session is session and not session.is_over and session.fen == position:
                 self._hint_text = message
                 self._refresh_coach()
                 self._refresh_controls()

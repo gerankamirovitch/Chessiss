@@ -77,6 +77,17 @@ class Score:
             return None
         return self.mate if color == chess.WHITE else -self.mate
 
+    def comparable_for(self, color: bool, moves_spent: int = 0) -> int:
+        """for_color, but mates stay ordered past the clamp: a nearer mate is worth more.
+        `moves_spent` counts a mating move already played before this evaluation."""
+        cp = self.for_color(color)
+        mate = self.mate_for(color)
+        if not mate:
+            return cp
+        if mate > 0:
+            return cp + 10 * (30 - min(mate + moves_spent, 30))
+        return cp - 10 * (30 - min(-mate, 30))
+
 
 @dataclass(frozen=True)
 class Line:

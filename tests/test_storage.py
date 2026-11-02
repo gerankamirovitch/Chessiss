@@ -69,6 +69,17 @@ def test_writes_are_visible_from_a_second_connection_without_close(tmp_path):
     reader.close()
 
 
+def test_record_move_writes_everything_a_move_changes(db):
+    game_id = add_game(db, result="*")
+    db.record_move(game_id, 1, "e4", "*", "1. e4 *", {"game_id": game_id})
+    assert db.get_moves(game_id)[0].san == "e4"
+    assert db.get_game(game_id).pgn == "1. e4 *"
+    assert db.get_json("active_game") == {"game_id": game_id}
+    db.record_move(game_id, 2, "e5", "1-0", "1. e4 e5 1-0", None)
+    assert db.get_game(game_id).result == "1-0"
+    assert db.get_json("active_game") == {"game_id": game_id}, "None leaves the saved state alone"
+
+
 def test_filter_by_mode_and_result(db):
     add_game(db, "ai", chess.WHITE, "1-0")
     add_game(db, "ai", chess.BLACK, "1-0")

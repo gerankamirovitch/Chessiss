@@ -121,7 +121,30 @@ def test_finished_game_rejects_moves():
         session.play(chess.Move.from_uci("e2e4"))
 
 
-def test_undo_local_takes_one_ply_and_restores_castling_rights_and_clock(fake_time):
+def test_undo_of_castling_restores_the_rook_and_castling_rights():
+    fen = "r3k2r/8/8/8/8/8/8/R3K2R w KQkq - 0 1"
+    session = local(fen)
+    play(session, "e1g1")
+    assert not session.board.has_castling_rights(chess.WHITE)
+    session.undo()
+    assert session.fen == fen
+    assert session.board.piece_type_at(chess.H1) == chess.ROOK
+    assert chess.G1 in session.legal_targets(chess.E1)
+
+
+def test_undo_of_en_passant_and_promotion_restores_captured_and_promoted():
+    session = local("4k3/P7/8/8/3pP3/8/8/4K3 b - e3 0 1")
+    start = session.fen
+    play(session, "d4e3")
+    assert session.board.piece_at(chess.E4) is None
+    session.undo()
+    assert session.fen == start
+    play(session, "e8e7", "a7a8q")
+    session.undo()
+    assert session.board.piece_type_at(chess.A7) == chess.PAWN
+
+
+def test_undo_local_takes_one_ply_and_restores_clock(fake_time):
     session = local(control=TimeControl(5, 3), now=fake_time)
     fake_time.advance(10)
     play(session, "e2e4")

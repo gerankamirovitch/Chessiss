@@ -51,6 +51,8 @@ TERMS = {
     "зевок": "ход хуже лучшего больше чем на 3 пешки, обычно потеря фигуры или мат",
 }
 
+DECISIVE_CP = 500
+
 _TERM_RE = re.compile(r"\[\[([^|\]]+)\|([^\]]+)\]\]")
 
 
@@ -257,9 +259,18 @@ def _targets_of_piece(after: chess.Board, square: int, color: bool) -> list[int]
     return targets
 
 
+def _landing_is_safe(after: chess.Board, move: chess.Move, color: bool) -> bool:
+    """The moved piece cannot be won. SEE only looks at the square itself, so a pawn
+    that just stepped two squares also has to survive en passant."""
+    if see(after, move.to_square, not color) > 0:
+        return False
+    double_step = abs(chess.square_rank(move.to_square) - chess.square_rank(move.from_square)) == 2
+    return not (after.piece_type_at(move.to_square) == chess.PAWN and double_step and after.has_legal_en_passant())
+
+
 def _fork_motif(before: chess.Board, after: chess.Board, move: chess.Move, color: bool) -> Optional[Motif]:
     to = move.to_square
-    if see(after, to, not color) > 0:
+    if not _landing_is_safe(after, move, color):
         return None
     targets = _targets_of_piece(after, to, color)
     if len(targets) < 2:
@@ -278,7 +289,7 @@ def _fork_motif(before: chess.Board, after: chess.Board, move: chess.Move, color
 def _discovered_motif(before: chess.Board, after: chess.Board, move: chess.Move, color: bool) -> Optional[Motif]:
     """A moved piece and a piece it uncovered each start a separate real threat."""
     to = move.to_square
-    if see(after, to, not color) > 0:
+    if not _landing_is_safe(after, move, color):
         return None
     moved_targets = _targets_of_piece(after, to, color)
     uncovered = []
@@ -321,7 +332,16 @@ def _pin_motif(before: chess.Board, after: chess.Board, move: chess.Move, color:
         behind = _first_piece_behind(after, to, victim)
         if behind is None or after.color_at(behind) == color:
             continue
-        if PIECE_VALUES[after.piece_type_at(behind)] <= PIECE_VALUES[victim_type]:
+        behind_type = after.piece_type_at(behind)
+        if PIECE_VALUES[behind_type] <= PIECE_VALUES[victim_type]:
+            continue
+        # If the piece behind is defended and worth less than the pinner, taking it loses
+        # material, so the front piece is free to move and there is no pin.
+        if (
+            behind_type != chess.KING
+            and PIECE_VALUES[behind_type] <= PIECE_VALUES[piece]
+            and after.attackers(not color, behind)
+        ):
             continue
         pronoun = "ней" if _is_feminine(victim_type) else "ним"
         return Motif(
@@ -365,6 +385,10 @@ def _wins_hanging_motif(before: chess.Board, move: chess.Move, color: bool) -> O
     victim = before.piece_type_at(move.to_square)
     if victim is None or see(before, move.to_square, color) < PIECE_VALUES[victim]:
         return None
+    after = before.copy(stack=False)
+    after.push(move)
+    if after.attackers(not color, move.to_square):
+        return Motif("wins_hanging", f"забирает {_ACCUSATIVE[victim]}: взять в ответ сопернику невыгодно")
     pronoun = "неё" if _is_feminine(victim) else "него"
     return Motif("wins_hanging", f"забирает {_ACCUSATIVE[victim]}: защиты у {pronoun} не было")
 
@@ -547,12 +571,13 @@ def _confirmed(board: chess.Board, score: Score, color: bool, material: Material
 
 
 def score_after(board_after: chess.Board, line: Optional[Line]) -> Score:
-    """Evaluation of a position, which may be final and so has no engine line."""
+    """Evaluation of a position, which may be final and so has no engine line. A line
+    wins over a claimable draw: an imported game can play on past a threefold repetition."""
+    if line is not None and board_after.outcome() is None:
+        return line.score
     outcome = outcome_of(board_after)
     if outcome is None:
-        if line is None:
-            raise ValueError("a position that is not final needs an engine line")
-        return line.score
+        raise ValueError("a position that is not final needs an engine line")
     if outcome.winner is None:
         return Score(0)
     return Score(EVAL_CLAMP if outcome.winner == chess.WHITE else -EVAL_CLAMP, 0)
@@ -645,7 +670,7 @@ def _generic_reason(board: chess.Board, move: chess.Move) -> str:
         return "упрощает позицию разменом"
     after = board.copy(stack=False)
     after.push(move)
-    if see(after, move.to_square, not color) == 0:
+    if _landing_is_safe(after, move, color):
         for target in after.attacks(move.to_square) & after.occupied_co[not color]:
             target_type = after.piece_type_at(target)
             if target_type != chess.KING and PIECE_VALUES[target_type] > PIECE_VALUES[piece]:
@@ -667,6 +692,14 @@ def _generic_reason(board: chess.Board, move: chess.Move) -> str:
     return "по расчёту движка он сильнее других"
 
 
+def _still_decided(before: Score, after: Score, color: bool) -> bool:
+    """The same side was clearly winning before and after the move. The result did not
+    change, and big swings up there are mostly the engine finding a mate at another depth,
+    so such a move is at worst an inaccuracy. The text still names the better move."""
+    was, now = before.for_color(color), after.for_color(color)
+    return (was >= DECISIVE_CP and now >= DECISIVE_CP) or (was <= -DECISIVE_CP and now <= -DECISIVE_CP)
+
+
 def explain_move(
     board: chess.Board, move: chess.Move, best: Line, after_line: Optional[Line]
 ) -> MoveExplanation:
@@ -678,8 +711,8 @@ def explain_move(
     after.push(move)
     score = score_after(after, after_line)
     is_best = move == best.move
-    cp_loss = 0 if is_best else max(0, best.score.for_color(color) - score.for_color(color))
-    mark = classify(cp_loss)
+    cp_loss = 0 if is_best else max(0, best.score.comparable_for(color) - score.comparable_for(color, 1))
+    mark = classify(min(cp_loss, 99) if _still_decided(best.score, score, color) else cp_loss)
     motifs = motifs_of_move(board, move)
 
     lines: list[str] = []
@@ -737,9 +770,11 @@ def _verdict(
 ) -> str:
     prefix = _MARK_TERMS.get(mark, "")
     mate = score.mate_for(color)
-    if cp_loss > 10 and mate is not None and mate < 0:
-        return f"{prefix}Ход допускает мат в {_moves_text(-mate)}."
     missed = best.score.mate_for(color)
+    if cp_loss > 10 and mate is not None and mate < 0:
+        if missed is not None and missed < 0:
+            return f"{prefix}Мат был неизбежен, но этот ход его ускоряет: теперь мат в {_moves_text(-mate)}."
+        return f"{prefix}Ход допускает мат в {_moves_text(-mate)}."
     if cp_loss > 10 and missed is not None and missed > 0:
         return f"{prefix}Ход упускает мат в {_moves_text(missed)}."
     if cp_loss > 10:

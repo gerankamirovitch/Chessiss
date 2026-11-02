@@ -25,7 +25,7 @@ from ui.widgets import header_bar
 
 
 def result_text(game: GameRow) -> str:
-    if game.result == "*":
+    if game.result not in ("1-0", "0-1", "1/2-1/2"):
         return "не завершена"
     if game.result == "1/2-1/2":
         return "ничья"

@@ -123,6 +123,15 @@ def test_relative_pin_to_queen():
     assert "pin" in kinds("3qk3/8/8/3n4/8/8/8/4KR2 w - - 0 1", "f1d1")
 
 
+def test_no_pin_when_taking_the_piece_behind_loses_the_pinner():
+    # Qe1 lines up knight and rook, but Qxe8 Kxe8 loses the queen, so the knight is free.
+    assert "pin" not in kinds("3kr3/8/8/4n3/8/8/8/K6Q w - - 0 1", "h1e1")
+
+
+def test_pin_on_an_undefended_piece_behind_counts():
+    assert "pin" in kinds("6k1/8/4r3/8/4n3/8/8/K4Q2 w - - 0 1", "f1e1")
+
+
 def test_no_pin_when_piece_behind_is_cheaper():
     assert "pin" not in kinds("3nk3/8/8/3q4/8/8/8/4KR2 w - - 0 1", "f1d1")
 
@@ -150,6 +159,26 @@ def test_old_mate_threat_is_not_reported_again():
 
 def test_taking_an_undefended_piece():
     assert "wins_hanging" in kinds("4k3/8/8/4n3/8/8/4R3/4K3 w - - 0 1", "e2e5")
+
+
+def test_capture_with_a_defender_that_cannot_profit_does_not_claim_no_defence():
+    motifs = motifs_of_move(chess.Board("3qk3/8/8/3r4/4P3/8/8/3RK3 w - - 0 1"), chess.Move.from_uci("e4d5"))
+    motif = next(m for m in motifs if m.kind == "wins_hanging")
+    assert "защиты" not in motif.clause
+    assert motif.clause == "забирает ладью: взять в ответ сопернику невыгодно"
+
+
+def test_capture_of_a_truly_undefended_piece_says_so():
+    motifs = motifs_of_move(chess.Board("4k3/8/8/4n3/8/8/4R3/4K3 w - - 0 1"), chess.Move.from_uci("e2e5"))
+    assert next(m for m in motifs if m.kind == "wins_hanging").clause == "забирает коня: защиты у него не было"
+
+
+def test_pawn_fork_refuted_by_en_passant_is_no_fork():
+    assert "fork" not in kinds("4k3/8/8/2n1n3/4p3/8/3P4/4K3 w - - 0 1", "d2d4")
+
+
+def test_double_step_fork_with_no_en_passant_available_counts():
+    assert "fork" in kinds("4k3/8/8/2n1n3/8/8/3P4/4K3 w - - 0 1", "d2d4")
 
 
 def test_taking_a_defended_piece_is_not_winning_a_hanging_piece():
@@ -323,6 +352,52 @@ def test_missed_mate_is_named():
     assert "Лучше был ход Фxf7#: ставит мат." in text
 
 
+def test_slower_mate_is_not_excellent_and_the_faster_one_is_shown():
+    # The clamp used to hide this: both evaluations were +1000, so cp_loss was 0.
+    board = chess.Board("6k1/5ppp/8/8/8/8/5PPP/3QR1K1 w - - 0 1")
+    explanation = explain_move(
+        board, chess.Move.from_uci("g2g3"), line(EVAL_CLAMP, "e1e8", mate=1), line(EVAL_CLAMP, "f7f6", mate=6),
+    )
+    text = explanation.render(set())
+    assert explanation.cp_loss > 10
+    assert explanation.mark != Mark.EXCELLENT
+    assert "Ход упускает мат в 1 ход." in text
+    assert "Лучше был ход Лe8#: ставит мат." in text
+
+
+def test_keeping_the_same_mate_on_schedule_loses_nothing():
+    board = chess.Board("6k1/5ppp/8/8/8/8/5PPP/3QR1K1 w - - 0 1")
+    explanation = explain_move(
+        board, chess.Move.from_uci("d1d7"), line(EVAL_CLAMP, "e1e8", mate=3), line(EVAL_CLAMP, "f7f6", mate=2),
+    )
+    assert explanation.cp_loss == 0
+
+
+def test_losing_side_hastening_its_own_mate_is_named():
+    board = chess.Board("6k1/5ppp/8/8/8/8/5PPP/3QR1K1 b - - 0 1")
+    explanation = explain_move(
+        board, chess.Move.from_uci("g7g6"),
+        line(EVAL_CLAMP, "g8f8", mate=9), line(EVAL_CLAMP, "e1e8", mate=2),
+    )
+    assert explanation.cp_loss > 10
+    assert "ускоряет" in explanation.render(set())
+
+
+def test_decided_position_is_at_worst_an_inaccuracy_but_names_the_better_move():
+    board = chess.Board("7k/8/8/8/8/8/R7/K7 b - - 0 1")
+    explanation = explain_move(
+        board, chess.Move.from_uci("h8g8"), line(700, "h8h7"), line(EVAL_CLAMP, "a2a8", mate=4),
+    )
+    assert explanation.mark == Mark.INACCURACY
+    assert "Лучше был ход Крh7" in explanation.render(set())
+
+
+def test_throwing_away_a_win_is_still_a_blunder():
+    board = chess.Board("7k/8/8/8/8/8/R7/K7 w - - 0 1")
+    explanation = explain_move(board, chess.Move.from_uci("a2a3"), line(700, "a2a7"), line(0, "h8g8"))
+    assert explanation.mark == Mark.BLUNDER
+
+
 def test_mark_word_is_only_written_while_it_is_new():
     board = chess.Board("4k3/8/8/4r3/8/8/4N3/6K1 w - - 0 1")
     explanation = explain_move(board, chess.Move.from_uci("g1h1"), line(-200, "e2c3"), line(-500, "e5e2"))
@@ -360,6 +435,27 @@ def test_recapture_is_not_called_winning_a_piece():
 )
 def test_general_reasons_state_something_true_about_the_move(fen, uci, reason):
     assert reason in _generic_reason(chess.Board(fen), chess.Move.from_uci(uci))
+
+
+def test_game_playing_on_past_threefold_keeps_the_engine_evaluation():
+    board = chess.Board("7k/8/8/8/8/8/R7/K7 w - - 0 1")
+    for uci in ("a2b2", "h8g8", "b2a2", "g8h8", "a2b2", "h8g8", "b2a2"):
+        board.push_uci(uci)
+    move = chess.Move.from_uci("g8h8")
+    after = board.copy()
+    after.push(move)
+    assert after.is_repetition(3)
+    explanation = explain_move(board, move, line(900, "g8h8"), line(900, "a2a8"))
+    assert explanation.score.cp == 900, "the third occurrence is not the end when moves follow"
+    assert explanation.mark != Mark.BLUNDER
+
+
+def test_final_threefold_in_a_finished_game_scores_as_a_draw():
+    board = chess.Board("7k/8/8/8/8/8/R7/K7 w - - 0 1")
+    for uci in ("a2b2", "h8g8", "b2a2", "g8h8", "a2b2", "h8g8", "b2a2"):
+        board.push_uci(uci)
+    explanation = explain_move(board, chess.Move.from_uci("g8h8"), line(900, "g8h8"), None)
+    assert explanation.score.cp == 0
 
 
 def test_position_text():

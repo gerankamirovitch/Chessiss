@@ -117,7 +117,7 @@ class SettingsScreen(QWidget):
 
     def _on_path_edited(self) -> None:
         path = self.path_edit.text().strip()
-        if path != (self.db.get_setting("stockfish_path") or ""):
+        if path != (self.db.get_setting("stockfish_path") or "") or not self.engine.available:
             self._apply_path(path)
 
     def _apply_path(self, path: str) -> None:

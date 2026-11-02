@@ -28,6 +28,19 @@ def test_level_params_cover_full_range_and_grow():
             level_params(bad)
 
 
+def test_depth_grows_at_every_level_from_five_up():
+    # At equal depth level 6 lost to level 5 (+10 =3 -17 in 30 games).
+    depths = [level_params(level).depth for level in range(5, 21)]
+    assert all(a < b for a, b in zip(depths, depths[1:]))
+
+
+def test_mates_stay_ordered_past_the_clamp():
+    near, far = Score(EVAL_CLAMP, 1), Score(EVAL_CLAMP, 7)
+    assert near.comparable_for(chess.WHITE) > far.comparable_for(chess.WHITE) > Score(EVAL_CLAMP).comparable_for(chess.WHITE)
+    assert Score(-EVAL_CLAMP, -2).comparable_for(chess.WHITE) < Score(-EVAL_CLAMP, -8).comparable_for(chess.WHITE)
+    assert near.comparable_for(chess.BLACK) == -EVAL_CLAMP - 290
+
+
 def test_move_time_never_burns_the_clock():
     assert move_time_ms(20, None) == 2000
     assert move_time_ms(20, 600_000) == 2000

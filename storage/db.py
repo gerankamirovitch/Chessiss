@@ -208,6 +208,22 @@ class Database:
                 (game_id, ply, san),
             )
 
+    def record_move(
+        self, game_id: int, ply: int, san: str, result: str, pgn: str, active_state: Optional[dict]
+    ) -> None:
+        """Everything a played move changes, in one transaction and one disk flush."""
+        with self._db:
+            self._db.execute(
+                "INSERT OR REPLACE INTO moves(game_id, ply, move_san) VALUES(?, ?, ?)", (game_id, ply, san)
+            )
+            self._db.execute("UPDATE games SET result = ?, pgn = ? WHERE id = ?", (result, pgn, game_id))
+            if active_state is not None:
+                self._db.execute(
+                    "INSERT INTO settings(key, value) VALUES('active_game', ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (json.dumps(active_state, ensure_ascii=False),),
+                )
+
     def annotate_move(self, game_id: int, ply: int, eval_cp: int, comment: str, mark: str) -> None:
         with self._db:
             self._db.execute(

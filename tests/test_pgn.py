@@ -89,6 +89,22 @@ def test_read_games_finds_every_game_and_keeps_order():
     assert games[1].sans == ["d4", "d5", "c4"]
 
 
+def test_bad_fen_header_skips_that_game_and_keeps_the_rest():
+    text = (
+        '[White "Bad"]\n[Result "*"]\n[FEN "not a fen"]\n[SetUp "1"]\n\n1. e4 *\n\n'
+        '[White "Good"]\n[Result "1-0"]\n\n1. d4 d5 1-0\n'
+    )
+    games = read_games(text)
+    assert [g.headers["White"] for g in games] == ["Good"]
+    assert games[0].sans == ["d4", "d5"]
+
+
+def test_impossible_position_is_skipped():
+    # The side not to move is in check: Stockfish must never see this.
+    text = '[White "Bad"]\n[SetUp "1"]\n[FEN "7k/8/8/8/8/8/1Q6/K7 w - - 0 1"]\n\n1. Qc2 *\n'
+    assert read_games(text) == []
+
+
 def test_garbage_is_not_a_game():
     assert read_first_game("") is None
     assert read_games("   \n\n") == []

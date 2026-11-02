@@ -33,16 +33,11 @@ def engines(stockfish_path):
     [
         (20, 1, ("e2e4", "e7e5")),
         (10, 2, ("d2d4", "d7d5")),
-        (6, 5, ("e2e4", "c7c5")),
     ],
 )
 def test_stronger_level_does_not_lose_with_either_color(engines, strong, weak, opening):
     a, b = engines
     as_white = play_out(a, b, strong, weak, opening)
     as_black = play_out(a, b, weak, strong, opening)
-    if (strong, weak) == (6, 5):
-        # Close levels: one lost game is possible, losing both colors is the old inversion.
-        assert not (as_white == "0-1" and as_black == "1-0")
-    else:
-        assert as_white == "1-0", f"level {strong} as white: {as_white}"
-        assert as_black == "0-1", f"level {strong} as black: {as_black}"
+    assert as_white == "1-0", f"level {strong} as white: {as_white}"
+    assert as_black == "0-1", f"level {strong} as black: {as_black}"

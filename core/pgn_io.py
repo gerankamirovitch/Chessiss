@@ -96,7 +96,10 @@ def read_games(text: str) -> list[ParsedGame]:
         game = chess.pgn.read_game(stream)
         if game is None:
             return games
-        parsed = _parse(game)
+        try:
+            parsed = _parse(game)
+        except ValueError:  # a [FEN] header that is malformed or describes an impossible position
+            continue
         if parsed.moves or parsed.errors or any(
             value not in ("?", "????.??.??", "*") for value in parsed.headers.values()
         ):
@@ -105,6 +108,8 @@ def read_games(text: str) -> list[ParsedGame]:
 
 def _parse(game: chess.pgn.Game) -> ParsedGame:
     board = game.board()
+    if not board.is_valid():  # Stockfish must never be handed an impossible position
+        raise ValueError(f"impossible position: {board.fen()}")
     start_fen = board.fen()
     moves: list[chess.Move] = []
     sans: list[str] = []
