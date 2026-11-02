@@ -8,4 +8,4 @@ build/
 dist/
 *.spec
 .pytest_cache/
-engines/stockfish/*.exe
+engines/stockfish/
