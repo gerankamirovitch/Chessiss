@@ -870,9 +870,9 @@ def test_history_filters_export_and_open(no_engine, tmp_path, monkeypatch, answe
     h.game._on_draw()
     h.window.show_history()
     assert h.window.history.table.rowCount() == 2
-    assert h.window.history.table.item(0, 3).text() == "5+3"
-    assert h.window.history.table.item(0, 4).text() == "ничья"
-    assert h.window.history.table.item(1, 4).text() == "чёрные выиграли"
+    assert h.window.history.table.item(0, 3).text() == "Блиц — 5+3"
+    assert h.window.history.table.item(0, 2).toolTip() == "ничья"
+    assert h.window.history.table.item(1, 2).toolTip() == "чёрные выиграли"
     box = h.window.history.result_box
     box.setCurrentIndex(box.findData("black"))
     assert h.window.history.table.rowCount() == 1
@@ -1248,6 +1248,7 @@ def test_failed_engine_is_retried_when_it_comes_back(app, stockfish_path, tmp_pa
         h.engine._custom_path = str(stockfish_path)
         h.engine.warm_up()
         assert wait_until(lambda: h.engine.available)
-        assert not h.window.home.engine_warning.isVisibleTo(h.window.home)
+        # The status reaches the home screen through a queued signal, a moment after `available` flips.
+        assert wait_until(lambda: not h.window.home.engine_warning.isVisibleTo(h.window.home))
     finally:
         h.close()

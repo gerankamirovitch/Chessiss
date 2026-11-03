@@ -53,7 +53,7 @@ CREATE TABLE IF NOT EXISTS settings (
 """
 
 DEFAULT_SETTINGS = {
-    "theme": "light",
+    "theme": "dark",
     "sound": "1",
     "language": "ru",
     "ai_level": "5",
@@ -89,6 +89,17 @@ class PuzzleStats:
     total: int
     solved: int
     solved_with_hint: int
+
+
+@dataclass(frozen=True)
+class PlayerStats:
+    wins: int
+    draws: int
+    losses: int
+
+    @property
+    def total(self) -> int:
+        return self.wins + self.draws + self.losses
 
 
 class Database:
@@ -198,6 +209,17 @@ class Database:
         if limit:
             sql += f" LIMIT {int(limit)}"
         return [_game_from_row(row) for row in self._db.execute(sql, args)]
+
+    def player_stats(self) -> PlayerStats:
+        """Finished games with a known player side, that is games against the AI."""
+        row = self._db.execute(
+            "SELECT "
+            "COALESCE(SUM((player_color = 'white' AND result = '1-0') OR (player_color = 'black' AND result = '0-1')), 0) AS wins, "
+            "COALESCE(SUM(result = '1/2-1/2'), 0) AS draws, "
+            "COALESCE(SUM((player_color = 'white' AND result = '0-1') OR (player_color = 'black' AND result = '1-0')), 0) AS losses "
+            "FROM games WHERE player_color IS NOT NULL"
+        ).fetchone()
+        return PlayerStats(row["wins"], row["draws"], row["losses"])
 
     # --- moves ---------------------------------------------------------------
 

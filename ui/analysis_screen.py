@@ -23,7 +23,8 @@ from core.analysis import GameReview
 from core.clock import storage_key_from_pgn_tag
 from core.explain import Mark
 from core.game import Mode
-from core.pgn_io import ParsedGame, read_first_game, read_games, ru_san
+from core.i18n import t, written_in_current_language
+from core.pgn_io import ParsedGame, display_san, read_first_game, read_games
 from storage.db import Database
 from ui.board_widget import BoardWidget
 from ui.engine_service import EngineService, Ticket
@@ -47,23 +48,23 @@ def load_pgn_file(parent: QWidget, path: str) -> Optional[ParsedGame]:
     except UnicodeDecodeError:
         text = Path(path).read_text(encoding="cp1251", errors="replace")
     except OSError as error:
-        QMessageBox.warning(parent, "PGN", f"Не удалось прочитать файл: {error}")
+        QMessageBox.warning(parent, "PGN", t("Не удалось прочитать файл: {error}", error=error))
         return None
     games = read_games(text)
     if not games:
-        QMessageBox.warning(parent, "PGN", "В файле нет ни одной партии.")
+        QMessageBox.warning(parent, "PGN", t("В файле нет ни одной партии."))
         return None
     game = games[0]
     if len(games) > 1:
         titles = [f"{index + 1}. {g.title}" for index, g in enumerate(games[:500])]
-        choice, accepted = QInputDialog.getItem(parent, "Выбор партии", f"Партий в файле: {len(games)}", titles, 0, False)
+        choice, accepted = QInputDialog.getItem(parent, t("Выбор партии"), t("Партий в файле: {count}", count=len(games)), titles, 0, False)
         if not accepted:
             return None
         game = games[titles.index(choice)]
     if game.errors:
         QMessageBox.warning(
             parent, "PGN",
-            f"Запись повреждена, загружено ходов: {len(game.moves)}.\n{game.errors[0]}",
+            t("Запись повреждена, загружено ходов: {count}.\n{error}", count=len(game.moves), error=game.errors[0]),
         )
     return game
 
@@ -92,7 +93,7 @@ class AnalysisScreen(QWidget):
         self._evals: dict[int, int] = {}
         self._ticket: Optional[Ticket] = None
 
-        header, self.title = header_bar("Анализ партии", self._on_back)
+        header, self.title = header_bar(t("Анализ партии"), self._on_back)
         self.board = BoardWidget(theme)
         self.fen_bar = FenBar()
         self.moves = MoveList()
@@ -112,17 +113,17 @@ class AnalysisScreen(QWidget):
         self.progress = QProgressBar()
         self.progress.setVisible(False)
 
-        self.open_button = QPushButton("Открыть PGN")
+        self.open_button = QPushButton(t("Открыть PGN"))
         self.open_button.clicked.connect(self.choose_file)
-        self.analyze_button = QPushButton("Запустить анализ")
+        self.analyze_button = QPushButton(t("Запустить анализ"))
         self.analyze_button.setObjectName("primary")
         self.analyze_button.clicked.connect(self.start_review)
-        self.cancel_button = QPushButton("Стоп")
+        self.cancel_button = QPushButton(t("Стоп"))
         self.cancel_button.clicked.connect(self.cancel_review)
         self.cancel_button.setVisible(False)
-        self.flip_button = QPushButton("Повернуть")
+        self.flip_button = QPushButton(t("Повернуть"))
         self.flip_button.clicked.connect(lambda: self.board.set_flipped(not self.board.flipped))
-        self.export_button = QPushButton("Сохранить PGN")
+        self.export_button = QPushButton(t("Сохранить PGN"))
         self.export_button.clicked.connect(self.export_pgn)
         for button in (self.open_button, self.analyze_button, self.cancel_button, self.flip_button, self.export_button):
             button.setAutoDefault(False)
@@ -184,12 +185,12 @@ class AnalysisScreen(QWidget):
         self.moves.clear_moves()
         self.graph.set_data([], [])
         self.summary.setText("")
-        self.coach.show_text("Откройте файл PGN или выберите партию в истории.")
+        self.coach.show_text(t("Откройте файл PGN или выберите партию в истории."))
         self.analyze_button.setEnabled(False)
         self.export_button.setEnabled(False)
 
     def choose_file(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Открыть PGN", "", "PGN (*.pgn);;Все файлы (*)")
+        path, _ = QFileDialog.getOpenFileName(self, t("Открыть PGN"), "", t("PGN (*.pgn);;Все файлы (*)"))
         if path:
             self.open_file(path)
 
@@ -207,7 +208,7 @@ class AnalysisScreen(QWidget):
         row = self.db.get_game(game_id)
         game = read_first_game(row.pgn) if row is not None else None
         if game is None:
-            QMessageBox.warning(self, "Партия", "Не удалось прочитать запись партии.")
+            QMessageBox.warning(self, t("Партия"), t("Не удалось прочитать запись партии."))
             return
         self.game = game
         self.game_id = game_id
@@ -260,19 +261,24 @@ class AnalysisScreen(QWidget):
         if self.game is None:
             return
         if self._ply == 0:
-            text = "Начальная позиция."
+            text = t("Начальная позиция.")
             if not self._comments:
-                text += " Нажмите «Запустить анализ», чтобы получить оценку и разбор каждого хода."
+                text += t(" Нажмите «Запустить анализ», чтобы получить оценку и разбор каждого хода.")
             self.coach.show_text(text)
             return
         san = self.game.sans[self._ply - 1]
         board = self.game.board_at(self._ply - 1)
-        side = "Белые" if board.turn == chess.WHITE else "Чёрные"
+        side = t("Белые") if board.turn == chess.WHITE else t("Чёрные")
+        title = f"{side}: {display_san(san)}"
         comment = self._comments.get(self._ply)
         if comment is None:
-            self.coach.show_blocks([ExplanationBlock(f"{side}: {ru_san(san)}", "Ход ещё не разобран.")])
+            self.coach.show_blocks([ExplanationBlock(title, t("Ход ещё не разобран."))])
+        elif not written_in_current_language(comment):
+            self.coach.show_blocks([ExplanationBlock(
+                title, t("Этот ход разбирался на другом языке. Запустите анализ ещё раз."), self._marks.get(self._ply),
+            )])
         else:
-            self.coach.show_blocks([ExplanationBlock(f"{side}: {ru_san(san)}", comment, self._marks.get(self._ply))])
+            self.coach.show_blocks([ExplanationBlock(title, comment, self._marks.get(self._ply))])
 
     def _refresh_graph(self) -> None:
         count = self._last_ply()
@@ -286,7 +292,7 @@ class AnalysisScreen(QWidget):
             return
         start_white = chess.Board(self.game.start_fen).turn == chess.WHITE
         rows = []
-        for color, name in ((chess.WHITE, "Белые"), (chess.BLACK, "Чёрные")):
+        for color, name in ((chess.WHITE, t("Белые")), (chess.BLACK, t("Чёрные"))):
             counts = {mark: 0 for mark in Mark}
             for ply, mark in self._marks.items():
                 is_white = (ply % 2 == 1) == start_white
@@ -296,7 +302,7 @@ class AnalysisScreen(QWidget):
                 f"<span style='color:{MARK_COLORS[mark]}'>{mark.label.lower()} {count}</span>"
                 for mark, count in counts.items() if count
             )
-            rows.append(f"<b>{name}:</b> {cells or 'нет разобранных ходов'}")
+            rows.append(f"<b>{name}:</b> {cells or t('нет разобранных ходов')}")
         self.summary.setText("<br>".join(rows))
 
     # --- review --------------------------------------------------------------
@@ -307,7 +313,7 @@ class AnalysisScreen(QWidget):
         self.progress.setRange(0, len(self.game.moves))
         self.progress.setValue(0)
         self.progress.setVisible(True)
-        self.progress.setFormat("%v из %m")
+        self.progress.setFormat(t("%v из %m"))
         self.analyze_button.setVisible(False)
         self.cancel_button.setVisible(True)
         self._ticket = self.engine.request_review(
@@ -331,7 +337,7 @@ class AnalysisScreen(QWidget):
     def _on_review_error(self, message: str) -> None:
         self._ticket = None
         self._review_finished()
-        QMessageBox.warning(self, "Анализ", message)
+        QMessageBox.warning(self, t("Анализ"), message)
 
     def _on_review_done(self, review: GameReview) -> None:
         self._ticket = None
@@ -366,10 +372,10 @@ class AnalysisScreen(QWidget):
 
 
 def export_game_pgn(parent: QWidget, pgn: str) -> None:
-    path, _ = QFileDialog.getSaveFileName(parent, "Сохранить PGN", "game.pgn", "PGN (*.pgn)")
+    path, _ = QFileDialog.getSaveFileName(parent, t("Сохранить PGN"), "game.pgn", "PGN (*.pgn)")
     if not path:
         return
     try:
         Path(path).write_text(pgn + "\n", encoding="utf-8")
     except OSError as error:
-        QMessageBox.warning(parent, "PGN", f"Не удалось сохранить файл: {error}")
+        QMessageBox.warning(parent, "PGN", t("Не удалось сохранить файл: {error}", error=error))

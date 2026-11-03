@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
 from core.clock import PRESETS, UNTIMED, TimeControl
 from core.engine import MAX_LEVEL, MIN_LEVEL
 from core.game import GameSetup, Mode
+from core.i18n import t
 
 _CUSTOM = "custom"
 
@@ -44,14 +45,14 @@ class NewGameDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.mode = mode
-        self.setWindowTitle("Новая партия")
+        self.setWindowTitle(t("Новая партия"))
         self.setMinimumWidth(380)
 
         form = QFormLayout()
         self.color_box = QComboBox()
-        self.color_box.addItem("Белые", "white")
-        self.color_box.addItem("Чёрные", "black")
-        self.color_box.addItem("Случайно", "random")
+        self.color_box.addItem(t("Белые"), "white")
+        self.color_box.addItem(t("Чёрные"), "black")
+        self.color_box.addItem(t("Случайно"), "random")
 
         level_row = QHBoxLayout()
         self.level_slider = QSlider(Qt.Horizontal)
@@ -65,28 +66,28 @@ class NewGameDialog(QDialog):
         level_row.addWidget(self.level_label)
 
         if mode == Mode.AI:
-            form.addRow("Ваш цвет", self.color_box)
-            form.addRow("Уровень AI (1–20)", level_row)
+            form.addRow(t("Ваш цвет"), self.color_box)
+            form.addRow(t("Уровень AI (1–20)"), level_row)
 
         self.control_box = QComboBox()
         for control in PRESETS:
             self.control_box.addItem(f"{control.category} {control.label}", control.storage_key)
-        self.control_box.addItem("Своя настройка", _CUSTOM)
-        self.control_box.addItem("Тренировка без таймера", UNTIMED.storage_key)
-        form.addRow("Контроль времени", self.control_box)
+        self.control_box.addItem(t("Своя настройка"), _CUSTOM)
+        self.control_box.addItem(t("Тренировка без таймера"), UNTIMED.storage_key)
+        form.addRow(t("Контроль времени"), self.control_box)
 
         self.minutes = QSpinBox()
         self.minutes.setRange(1, 300)
         self.minutes.setValue(10)
-        self.minutes.setSuffix(" мин")
+        self.minutes.setSuffix(t(" мин"))
         self.increment = QSpinBox()
         self.increment.setRange(0, 180)
-        self.increment.setSuffix(" сек")
+        self.increment.setSuffix(t(" сек"))
         custom_row = QHBoxLayout()
         custom_row.addWidget(self.minutes)
         custom_row.addWidget(QLabel("+"))
         custom_row.addWidget(self.increment)
-        self.custom_row_label = QLabel("Минуты + инкремент")
+        self.custom_row_label = QLabel(t("Минуты + инкремент"))
         form.addRow(self.custom_row_label, custom_row)
 
         self.control_box.currentIndexChanged.connect(self._sync_custom)
@@ -94,8 +95,8 @@ class NewGameDialog(QDialog):
         self._sync_custom()
 
         buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.button(QDialogButtonBox.Ok).setText("Начать")
-        buttons.button(QDialogButtonBox.Cancel).setText("Отмена")
+        buttons.button(QDialogButtonBox.Ok).setText(t("Начать"))
+        buttons.button(QDialogButtonBox.Cancel).setText(t("Отмена"))
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 

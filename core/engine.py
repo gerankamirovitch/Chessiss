@@ -12,6 +12,7 @@ from typing import Optional
 import chess
 import chess.engine
 
+from core.i18n import t
 from core.paths import bundled_engine_dir
 
 MIN_LEVEL = 1
@@ -162,7 +163,7 @@ class Engine:
             except Exception as error:
                 self._fail(error)
         if move is None:
-            raise EngineFailure("Stockfish не вернул ход.")
+            raise EngineFailure(t("Stockfish не вернул ход."))
         return move
 
     def analyse(
@@ -181,12 +182,12 @@ class Engine:
             if "score" in info and info.get("pv")
         ]
         if not lines:
-            raise EngineFailure("Stockfish не вернул оценку позиции.")
+            raise EngineFailure(t("Stockfish не вернул оценку позиции."))
         return lines
 
     def _require(self) -> chess.engine.SimpleEngine:
         if self._engine is None:
-            raise EngineFailure("Stockfish не запущен.")
+            raise EngineFailure(t("Stockfish не запущен."))
         return self._engine
 
     def _start_locked(self) -> None:
@@ -203,7 +204,7 @@ class Engine:
         except Exception as error:
             self._stop_locked()
             raise EngineFailure(
-                f"Не удалось запустить Stockfish ({self.path}): {error or type(error).__name__}"
+                t("Не удалось запустить Stockfish ({path}): {error}", path=self.path, error=error or type(error).__name__)
             ) from error
         self._skill = None
 
@@ -219,5 +220,5 @@ class Engine:
     def _fail(self, error: Exception) -> None:
         self._stop_locked()
         raise EngineFailure(
-            f"Stockfish перестал отвечать: {error or type(error).__name__}"
+            t("Stockfish перестал отвечать: {error}", error=error or type(error).__name__)
         ) from error

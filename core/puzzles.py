@@ -7,6 +7,8 @@ from typing import Optional
 
 import chess
 
+from core.i18n import t
+
 THEMES = {
     "fork": "Вилка",
     "pin": "Связка",
@@ -29,7 +31,7 @@ class Puzzle:
 
     @property
     def theme_name(self) -> str:
-        return THEMES.get(self.theme, self.theme)
+        return t(THEMES[self.theme]) if self.theme in THEMES else self.theme
 
 
 class Attempt(Enum):

@@ -14,6 +14,7 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from core.analysis import Analyzer, review_game
 from core.engine import Engine, EngineFailure, find_stockfish
+from core.i18n import t
 
 NOT_FOUND_MESSAGE = (
     "Stockfish не найден. Укажите путь к stockfish.exe в настройках. "
@@ -162,7 +163,7 @@ class EngineService(QObject):
                 self._deliver.emit(lambda: None if ticket.cancelled else on_error(message))
                 return
             except Exception as error:  # a bad position or a python-chess error must not kill the worker
-                message = f"Ошибка анализа: {error}"
+                message = t("Ошибка анализа: {error}", error=error)
                 self._deliver.emit(lambda: None if ticket.cancelled else on_error(message))
                 return
             self._set_status(True, "")
@@ -184,7 +185,7 @@ class EngineService(QObject):
     def _make_engine(self, threads: int, hash_mb: int) -> Engine:
         path = find_stockfish(self._custom_path or None)
         if path is None:
-            raise EngineFailure(NOT_FOUND_MESSAGE)
+            raise EngineFailure(t(NOT_FOUND_MESSAGE))
         engine = Engine(path, threads=threads, hash_mb=hash_mb)
         engine.start()
         return engine

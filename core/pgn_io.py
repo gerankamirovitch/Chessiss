@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import re
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -9,6 +10,7 @@ import chess
 import chess.pgn
 
 from core.game import GameSession, Mode, Termination
+from core.i18n import is_english, t
 
 _RU_PIECES = str.maketrans({"N": "К", "B": "С", "R": "Л", "Q": "Ф", "O": "0"})
 
@@ -18,6 +20,30 @@ def ru_san(san: str) -> str:
     if san.startswith("K"):
         san = "Кр" + san[1:]
     return san.translate(_RU_PIECES)
+
+
+def display_san(san: str) -> str:
+    """SAN as the interface shows it: Russian piece letters in Russian, standard in English."""
+    return san if is_english() else ru_san(san)
+
+
+_ENGINE_NAME = re.compile(r"^Stockfish, (?:уровень|level) (\d+)$")
+_SIDE_NAMES = {
+    "Белые": "Белые",
+    "White": "Белые",
+    "Чёрные": "Чёрные",
+    "Black": "Чёрные",
+    "Игрок": "Игрок",
+    "Player": "Игрок",
+}
+
+
+def display_player(name: str) -> str:
+    """A saved game keeps the names of the language it was played in: shows them in the current one."""
+    engine = _ENGINE_NAME.match(name)
+    if engine:
+        return t("Stockfish, уровень {level}", level=engine.group(1))
+    return t(_SIDE_NAMES[name]) if name in _SIDE_NAMES else name
 
 
 def is_valid_fen(fen: str) -> bool:
@@ -39,10 +65,13 @@ class ParsedGame:
 
     @property
     def title(self) -> str:
-        white = self.headers.get("White", "?")
-        black = self.headers.get("Black", "?")
+        white = display_player(self.headers.get("White", "?"))
+        black = display_player(self.headers.get("Black", "?"))
         date = self.headers.get("Date", "")
-        return f"{white} — {black}, {date}, {self.result}, ходов: {(len(self.moves) + 1) // 2}"
+        return t(
+            "{white} — {black}, {date}, {result}, ходов: {moves}",
+            white=white, black=black, date=date, result=self.result, moves=(len(self.moves) + 1) // 2,
+        )
 
     def board_at(self, ply: int) -> chess.Board:
         board = chess.Board(self.start_fen)
@@ -81,11 +110,11 @@ def session_to_pgn(session: GameSession) -> str:
 
 def _player_names(session: GameSession) -> tuple[str, str]:
     if session.mode != Mode.AI:
-        return "Белые", "Чёрные"
-    engine = f"Stockfish, уровень {session.setup.level}"
+        return t("Белые"), t("Чёрные")
+    engine = t("Stockfish, уровень {level}", level=session.setup.level)
     if session.setup.player_color == chess.WHITE:
-        return "Игрок", engine
-    return engine, "Игрок"
+        return t("Игрок"), engine
+    return engine, t("Игрок")
 
 
 def read_games(text: str) -> list[ParsedGame]:

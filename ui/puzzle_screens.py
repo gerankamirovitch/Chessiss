@@ -19,7 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core.pgn_io import ru_san
+from core.i18n import t
+from core.pgn_io import display_san
 from core.puzzles import THEMES, Attempt, Puzzle, PuzzleSession
 from storage.db import Database
 from ui.board_widget import BoardWidget
@@ -40,28 +41,28 @@ class PuzzleListScreen(QWidget):
         self.db = db
         self._puzzles: list[Puzzle] = []
 
-        header, _ = header_bar("Пазлы", self.backRequested.emit)
+        header, _ = header_bar(t("Пазлы"), self.backRequested.emit)
         self.stats = QLabel()
         self.theme_box = QComboBox()
-        self.theme_box.addItem("Все темы", None)
+        self.theme_box.addItem(t("Все темы"), None)
         for key, name in THEMES.items():
-            self.theme_box.addItem(name, key)
+            self.theme_box.addItem(t(name), key)
         self.theme_box.currentIndexChanged.connect(self.refresh)
-        self.unsolved = QCheckBox("Только нерешённые")
+        self.unsolved = QCheckBox(t("Только нерешённые"))
         self.unsolved.toggled.connect(self.refresh)
-        self.start_button = QPushButton("Решать")
+        self.start_button = QPushButton(t("Решать"))
         self.start_button.setObjectName("primary")
         self.start_button.clicked.connect(self._start_selected)
 
         filters = QHBoxLayout()
-        filters.addWidget(QLabel("Тема"))
+        filters.addWidget(QLabel(t("Тема")))
         filters.addWidget(self.theme_box)
         filters.addWidget(self.unsolved)
         filters.addStretch(1)
         filters.addWidget(self.start_button)
 
         self.table = QTableWidget(0, 4)
-        self.table.setHorizontalHeaderLabels(["Тема", "Сложность", "Ход", "Статус"])
+        self.table.setHorizontalHeaderLabels([t("Тема"), t("Сложность"), t("Ход"), t("Статус")])
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -82,15 +83,18 @@ class PuzzleListScreen(QWidget):
         self._puzzles = self.db.list_puzzles(theme, self.unsolved.isChecked())
         self.table.setRowCount(len(self._puzzles))
         for row, puzzle in enumerate(self._puzzles):
-            status = "не решён"
+            status = t("не решён")
             if puzzle.solved:
-                status = "решён с подсказкой" if puzzle.used_hint else "решён"
-            side = "белые" if chess.Board(puzzle.fen).turn == chess.WHITE else "чёрные"
+                status = t("решён с подсказкой") if puzzle.used_hint else t("решён")
+            side = t("белые") if chess.Board(puzzle.fen).turn == chess.WHITE else t("чёрные")
             for column, text in enumerate((puzzle.theme_name, str(puzzle.rating), side, status)):
                 self.table.setItem(row, column, QTableWidgetItem(text))
         stats = self.db.puzzle_stats(theme)
         self.stats.setText(
-            f"Всего: {stats.total}. Решено: {stats.solved}, из них с подсказкой: {stats.solved_with_hint}."
+            t(
+                "Всего: {total}. Решено: {solved}, из них с подсказкой: {hinted}.",
+                total=stats.total, solved=stats.solved, hinted=stats.solved_with_hint,
+            )
         )
         self.start_button.setEnabled(bool(self._puzzles))
         if self._puzzles:
@@ -117,7 +121,7 @@ class PuzzleSolveScreen(QWidget):
         self._queue: list[str] = []
         self._position = 0
 
-        header, self.title = header_bar("Пазл", self.backRequested.emit)
+        header, self.title = header_bar(t("Пазл"), self.backRequested.emit)
         self.board = BoardWidget(theme)
         self.board.moveAttempted.connect(self._on_move)
 
@@ -129,13 +133,13 @@ class PuzzleSolveScreen(QWidget):
         self.info = QLabel()
         self.info.setObjectName("muted")
 
-        self.hint_button = QPushButton("Подсказка")
+        self.hint_button = QPushButton(t("Подсказка"))
         self.hint_button.clicked.connect(self._on_hint)
-        self.reset_button = QPushButton("Сначала")
+        self.reset_button = QPushButton(t("Сначала"))
         self.reset_button.clicked.connect(self._on_reset)
-        self.flip_button = QPushButton("Повернуть")
+        self.flip_button = QPushButton(t("Повернуть"))
         self.flip_button.clicked.connect(lambda: self.board.set_flipped(not self.board.flipped))
-        self.next_button = QPushButton("Следующий")
+        self.next_button = QPushButton(t("Следующий"))
         self.next_button.setObjectName("primary")
         self.next_button.clicked.connect(self._on_next)
         for button in (self.hint_button, self.reset_button, self.flip_button, self.next_button):
@@ -175,10 +179,10 @@ class PuzzleSolveScreen(QWidget):
         self.board.set_controller(self.session)
         self.board.set_flipped(self.session.solver == chess.BLACK)
         self.board.set_marked_squares({})
-        side = "белых" if self.session.solver == chess.WHITE else "чёрных"
-        self.title.setText(f"Пазл: {puzzle.theme_name}")
-        self.task.setText(f"Ход {side}. Найдите лучшее продолжение.")
-        self.info.setText(f"Сложность {puzzle.rating} · {self._queue_text()}")
+        side = t("белых") if self.session.solver == chess.WHITE else t("чёрных")
+        self.title.setText(t("Пазл: {theme}", theme=puzzle.theme_name))
+        self.task.setText(t("Ход {side}. Найдите лучшее продолжение.", side=side))
+        self.info.setText(t("Сложность {rating} · {queue}", rating=puzzle.rating, queue=self._queue_text()))
         self.feedback.setText("")
         self.next_button.setEnabled(self._position + 1 < len(self._queue))
         self._refresh_board(animate=False)
@@ -186,7 +190,7 @@ class PuzzleSolveScreen(QWidget):
     def _queue_text(self) -> str:
         if not self._queue:
             return ""
-        return f"{self._position + 1} из {len(self._queue)}"
+        return t("{index} из {total}", index=self._position + 1, total=len(self._queue))
 
     def _refresh_board(self, animate: bool) -> None:
         session = self.session
@@ -205,7 +209,7 @@ class PuzzleSolveScreen(QWidget):
         attempt = session.try_move(move)
         if attempt == Attempt.WRONG:
             self.sound.play("wrong")
-            self.feedback.setText("Не то. Попробуйте ещё раз.")
+            self.feedback.setText(t("Не то. Попробуйте ещё раз."))
             self._refresh_board(animate=False)
             return
         self._refresh_board(animate=True)
@@ -213,7 +217,7 @@ class PuzzleSolveScreen(QWidget):
             self._on_solved()
             return
         self.sound.play("correct")
-        self.feedback.setText("Верно. Продолжайте.")
+        self.feedback.setText(t("Верно. Продолжайте."))
         expected_session = session
         self.board.set_interactive(set())
         QTimer.singleShot(REPLY_DELAY_MS, lambda: self._play_reply(expected_session))
@@ -230,9 +234,9 @@ class PuzzleSolveScreen(QWidget):
         session = self.session
         self.db.mark_puzzle_solved(session.puzzle.id, session.used_hint)
         self.sound.play("correct")
-        suffix = " Подсказка учтена в статистике." if session.used_hint else ""
-        self.feedback.setText(f"Решено!{suffix}")
-        self.task.setText("Пазл решён.")
+        suffix = t(" Подсказка учтена в статистике.") if session.used_hint else ""
+        self.feedback.setText(t("Решено!{suffix}", suffix=suffix))
+        self.task.setText(t("Пазл решён."))
 
     def _on_hint(self) -> None:
         session = self.session
@@ -243,7 +247,7 @@ class PuzzleSolveScreen(QWidget):
             return
         self.board.set_marked_squares({move.from_square: HINT_SQUARE_COLOR, move.to_square: HINT_SQUARE_COLOR})
         san = session.board.san(move)
-        self.feedback.setText(f"Подсказка: {ru_san(san)}.")
+        self.feedback.setText(t("Подсказка: {move}.", move=display_san(san)))
 
     def _on_reset(self) -> None:
         if self.session is None:
@@ -251,8 +255,8 @@ class PuzzleSolveScreen(QWidget):
         self.session.reset()
         self.board.set_marked_squares({})
         self.feedback.setText("")
-        side = "белых" if self.session.solver == chess.WHITE else "чёрных"
-        self.task.setText(f"Ход {side}. Найдите лучшее продолжение.")
+        side = t("белых") if self.session.solver == chess.WHITE else t("чёрных")
+        self.task.setText(t("Ход {side}. Найдите лучшее продолжение.", side=side))
         self._refresh_board(animate=False)
 
     def _on_next(self) -> None:

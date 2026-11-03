@@ -7,6 +7,8 @@ from typing import Callable, Optional
 
 import chess
 
+from core.i18n import t
+
 
 @dataclass(frozen=True)
 class TimeControl:
@@ -27,7 +29,7 @@ class TimeControl:
     @property
     def label(self) -> str:
         if self.untimed:
-            return "без таймера"
+            return t("без таймера")
         return f"{self.minutes}+{self.increment}"
 
     @property

@@ -10,6 +10,7 @@ from typing import Callable, Optional, Sequence
 import chess
 
 from core.clock import ChessClock, TimeControl
+from core.i18n import t
 
 
 class Mode(str, Enum):
@@ -77,11 +78,12 @@ class GameOutcome:
 
     @property
     def text(self) -> str:
-        reason = TERMINATION_TEXT[self.termination]
+        reason = t(TERMINATION_TEXT[self.termination])
         if self.winner is None:
-            return f"Ничья: {reason}."
-        side = "Белые" if self.winner == chess.WHITE else "Чёрные"
-        return f"{side} выиграли: {reason}."
+            return t("Ничья: {reason}.", reason=reason)
+        if self.winner == chess.WHITE:
+            return t("Белые выиграли: {reason}.", reason=reason)
+        return t("Чёрные выиграли: {reason}.", reason=reason)
 
 
 @dataclass(frozen=True)

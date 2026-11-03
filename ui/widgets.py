@@ -22,7 +22,8 @@ from PySide6.QtWidgets import (
 )
 
 from core.explain import Mark
-from core.pgn_io import ru_san
+from core.i18n import t
+from core.pgn_io import display_san
 from ui.theme import LIGHT, MARK_COLORS, Theme
 
 
@@ -30,7 +31,7 @@ def header_bar(title: str, on_back) -> tuple[QWidget, QLabel]:
     bar = QWidget()
     layout = QHBoxLayout(bar)
     layout.setContentsMargins(0, 0, 0, 0)
-    back = QPushButton("← Меню")
+    back = QPushButton(t("← Меню"))
     back.clicked.connect(lambda: on_back())
     back.setAutoDefault(False)
     label = QLabel(title)
@@ -49,7 +50,7 @@ class MoveList(QTableWidget):
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(0, 3, parent)
-        self.setHorizontalHeaderLabels(["", "Белые", "Чёрные"])
+        self.setHorizontalHeaderLabels(["", t("Белые"), t("Чёрные")])
         self.verticalHeader().setVisible(False)
         self.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -88,7 +89,7 @@ class MoveList(QTableWidget):
             number.setFlags(Qt.ItemIsEnabled)
             number.setForeground(self.palette().placeholderText())
             self.setItem(row, 0, number)
-        item = QTableWidgetItem(ru_san(san))
+        item = QTableWidgetItem(display_san(san))
         self.setItem(row, column, item)
 
     def pop_moves(self, count: int) -> None:
@@ -245,7 +246,7 @@ class ExplanationPanel(QTextBrowser):
             color = MARK_COLORS[block.mark] if block.mark is not None else None
             badge = f' <span style="color:{color}; font-weight:600;">{block.mark.label}</span>' if color else ""
             parts.append(f"<p style='margin:0 0 2px 0;'><b>{html.escape(block.title)}</b>{badge}</p>")
-            body = "Считаю…" if block.pending else block.text
+            body = t("Считаю…") if block.pending else block.text
             lines = "<br>".join(html.escape(line) for line in body.split("\n"))
             parts.append(f"<p style='margin:0 0 10px 0;'>{lines}</p>")
         self.setHtml("".join(parts))
@@ -263,7 +264,7 @@ class FenBar(QWidget):
         label.setObjectName("muted")
         self.field = QLineEdit()
         self.field.setReadOnly(True)
-        self.copy_button = QPushButton("Копировать")
+        self.copy_button = QPushButton(t("Копировать"))
         self.copy_button.setAutoDefault(False)
         self.copy_button.clicked.connect(self._copy)
         layout.addWidget(label)
@@ -286,10 +287,10 @@ class NavBar(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         for text, handler, tip in (
-            ("«", on_first, "К началу (Home)"),
-            ("‹", on_prev, "Ход назад (←)"),
-            ("›", on_next, "Ход вперёд (→)"),
-            ("»", on_last, "К последнему ходу (End)"),
+            ("«", on_first, t("К началу (Home)")),
+            ("‹", on_prev, t("Ход назад (←)")),
+            ("›", on_next, t("Ход вперёд (→)")),
+            ("»", on_last, t("К последнему ходу (End)")),
         ):
             button = QPushButton(text)
             button.setToolTip(tip)

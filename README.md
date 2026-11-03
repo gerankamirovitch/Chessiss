@@ -1,33 +1,36 @@
 # Chessiss
 
-Шахматы для Windows с тренером, который после каждого хода объясняет, как он изменил оценку позиции, какой ход был лучше и почему. Объяснения собираются из анализа Stockfish по шаблонам, без нейросетей и без интернета.
+Chess for Windows with a coach that explains every move: how it changed the evaluation, which move was better and why. The explanations are built from Stockfish analysis using templates, with no neural networks and no internet connection.
 
-![Объяснение хода](docs/game-explanation.png)
+![Move explanation](docs/game-explanation.png)
 
-## Что есть
+## Features
 
-- Игра против Stockfish, уровни 1-20, с разбором каждого хода. Перед ходом можно запросить подсказку: до трёх вариантов с причиной.
-- Игра вдвоём за одним компьютером.
-- Контроль времени: Bullet, Blitz, Rapid, Classical, своя настройка (минуты и инкремент) или тренировка без таймера. Просрочка времени даёт поражение, а если у соперника нет материала для мата, ничью.
-- 600 тактических пазлов: вилка, связка, мат в 1, 2 и 3 хода, выигрыш материала.
-- Разбор партии с пометками ходов (отличный, хороший, неточность, ошибка, зевок) и графиком оценки. Партию можно загрузить из PGN.
-- История партий с фильтрами, импорт и экспорт PGN.
-- Прерванную партию можно продолжить после перезапуска.
-- Светлая и тёмная темы.
+- Play against Stockfish, levels 1-20, with an explanation of every move. Before your move you can ask for a hint: up to three candidates, each with a reason.
+- Two-player mode on one computer.
+- Time controls: Bullet, Blitz, Rapid, Classical, custom (minutes and increment) or practice without a timer. Running out of time loses the game, or draws it if the opponent has no mating material.
+- 600 tactical puzzles: forks, pins, mate in 1, 2 and 3, winning material.
+- Game review with move marks (excellent, good, inaccuracy, mistake, blunder) and an evaluation graph. Games can be loaded from PGN.
+- Game history with filters, PGN import and export, and win/draw/loss statistics for your games against the AI.
+- An interrupted game can be resumed after a restart.
+- Dark and light themes.
+- English and Russian interface, switchable in Settings without a restart.
 
-![Разбор партии](docs/analysis.png)
+![Home screen](docs/home.png)
 
-![Пазл](docs/puzzle.png)
+![Game review](docs/analysis.png)
 
-## Скачать
+![Puzzle](docs/puzzle.png)
 
-Готовая portable-сборка лежит в [релизе v1.0.0](https://github.com/gerankamirovitch/Chessiss/releases/tag/v1.0.0). Распакуйте архив и запустите `Chessiss\Chessiss.exe`. Установка не нужна, Stockfish внутри. Файл не подписан, поэтому при первом запуске Windows может показать предупреждение.
+## Download
 
-Партии, пазлы и настройки хранятся в `%LOCALAPPDATA%\Chessiss`. Папку с программой можно заменять, данные останутся.
+A portable build is available in the [v1.1.0 release](https://github.com/gerankamirovitch/Chessiss/releases/tag/v1.1.0). Unzip the archive and run `Chessiss\Chessiss.exe`. There is nothing to install, and Stockfish is included. The file is not signed, so Windows may show a warning on the first launch.
 
-## Запуск из исходников
+Games, puzzles and settings are stored in `%LOCALAPPDATA%\Chessiss`, so you can replace the program folder and keep your data.
 
-Нужны Python 3 и Windows x64.
+## Run from source
+
+You need Python 3 and Windows x64.
 
 ```powershell
 git clone https://github.com/gerankamirovitch/Chessiss.git
@@ -38,48 +41,48 @@ python -m venv .venv
 .\.venv\Scripts\python.exe main.py
 ```
 
-`scripts/fetch_stockfish.py` скачивает Stockfish 19 в `~/Downloads`, сверяет SHA-256 и кладёт его в `engines/stockfish/`. Бинарника в репозитории нет. Путь к другому Stockfish можно указать в настройках приложения.
+`scripts/fetch_stockfish.py` downloads Stockfish 19 to `~/Downloads`, verifies its SHA-256 and places it in `engines/stockfish/`. The binary is not stored in the repository. You can point the app at another Stockfish in Settings.
 
-## Тесты
+## Tests
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-dev.txt
 .\.venv\Scripts\python.exe -m pytest tests -q
 ```
 
-Тесты, которым нужен движок, пропускаются, если в `engines/stockfish/` нет Stockfish. Полный прогон занимает около пяти минут.
+Tests that need the engine are skipped if there is no Stockfish in `engines/stockfish/`. A full run takes about five minutes.
 
-## Сборка
+## Build
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\build.py
 ```
 
-Результат: папка `dist\Chessiss` (PyInstaller, onedir) со Stockfish внутри. Перед сборкой должен быть выполнен `scripts/fetch_stockfish.py`.
+The result is the `dist\Chessiss` folder (PyInstaller, onedir) with Stockfish inside. Run `scripts/fetch_stockfish.py` before building.
 
-## Структура
+## Project layout
 
 ```text
-core/      правила, часы, обёртка над Stockfish, генератор объяснений, PGN
-storage/   SQLite: партии, ходы, пазлы, настройки
-ui/        окна PySide6, шахматной логики в них нет
-net/       пусто, место под сетевой режим
-scripts/   загрузка Stockfish, сборка пазлов, сборка exe
+core/      rules, clock, Stockfish wrapper, explanation generator, PGN, translations
+storage/   SQLite: games, moves, puzzles, settings
+ui/        PySide6 windows, no chess logic
+net/       empty, reserved for an online mode
+scripts/   Stockfish download, puzzle set build, exe build
 data/      puzzles.json
 tests/     pytest
 ```
 
-## Ограничения
+## Limitations
 
-- Проверено только на Windows 11 x64. На Windows 10 приложение не запускалось.
-- Интерфейс только на русском.
-- Если отменить ходы, сделанные до восстановления прерванной партии, потраченное на них время не вернётся.
+- Tested on Windows 11 x64 only. The app has not been run on Windows 10.
+- Move explanations saved in one language are not translated. After switching language, run the analysis again to get them in the new one.
+- If you undo moves made before an interrupted game was restored, the time spent on them is not returned.
 
-## Лицензии
+## Licenses
 
-Код Chessiss распространяется под GPLv3, текст в файле [LICENSE](LICENSE).
+Chessiss is distributed under GPLv3, see [LICENSE](LICENSE).
 
-- [Stockfish](https://stockfishchess.org/) 19, GPLv3. Запускается как отдельный процесс по протоколу UCI.
+- [Stockfish](https://stockfishchess.org/) 19, GPLv3. It runs as a separate process over the UCI protocol.
 - [python-chess](https://github.com/niklasf/python-chess), GPLv3.
 - [PySide6](https://doc.qt.io/qtforpython-6/), LGPLv3.
-- Пазлы взяты из [базы Lichess](https://database.lichess.org/#puzzles), CC0.
+- The puzzles come from the [Lichess database](https://database.lichess.org/#puzzles), CC0.

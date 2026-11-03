@@ -18,7 +18,8 @@ from PySide6.QtWidgets import (
 from core.clock import format_clock
 from core.explain import Hint, Mark, MoveExplanation
 from core.game import GameSession, GameSetup, Mode, PlayedMove
-from core.pgn_io import ru_san, session_to_pgn
+from core.i18n import t
+from core.pgn_io import display_san, session_to_pgn
 from storage.db import COLOR_NAMES, Database
 from ui.board_widget import BoardWidget
 from ui.engine_service import EngineService, Ticket
@@ -65,7 +66,7 @@ class GameScreen(QWidget):
         self._seen_terms: set[str] = db.seen_terms()
         self._ai_clock = QElapsedTimer()
 
-        header, self.title = header_bar("Партия", self._on_back)
+        header, self.title = header_bar(t("Партия"), self._on_back)
         self.board = BoardWidget(theme)
         self.board.moveAttempted.connect(self._on_board_move)
 
@@ -91,16 +92,16 @@ class GameScreen(QWidget):
         )
         self.fen_bar = FenBar()
 
-        self.hint_button = self._button("Подсказка", self._on_hint)
-        self.flip_button = self._button("Повернуть", self._on_flip)
-        self.undo_button = self._button("Отменить ход", self._on_undo)
-        self.draw_button = self._button("Ничья", self._on_draw)
-        self.resign_button = self._button("Сдаться", self._on_resign)
-        self.pause_button = self._button("Пауза", self._on_pause)
-        self.rematch_button = self._button("Реванш", self._on_rematch)
-        self.review_button = self._button("Разбор партии", self._on_review)
+        self.hint_button = self._button(t("Подсказка"), self._on_hint)
+        self.flip_button = self._button(t("Повернуть"), self._on_flip)
+        self.undo_button = self._button(t("Отменить ход"), self._on_undo)
+        self.draw_button = self._button(t("Ничья"), self._on_draw)
+        self.resign_button = self._button(t("Сдаться"), self._on_resign)
+        self.pause_button = self._button(t("Пауза"), self._on_pause)
+        self.rematch_button = self._button(t("Реванш"), self._on_rematch)
+        self.review_button = self._button(t("Разбор партии"), self._on_review)
         self.review_button.setObjectName("primary")
-        self.retry_button = self._button("Повторить ход AI", self._on_retry_ai)
+        self.retry_button = self._button(t("Повторить ход AI"), self._on_retry_ai)
 
         buttons = QGridLayout()
         buttons.setSpacing(6)
@@ -217,9 +218,9 @@ class GameScreen(QWidget):
         self.moves.set_moves(session.sans)
         self.moves.set_current_ply(self._view_ply)
         if session.mode == Mode.AI:
-            self.title.setText(f"Партия против Stockfish, уровень {session.setup.level}")
+            self.title.setText(t("Партия против Stockfish, уровень {level}", level=session.setup.level))
         else:
-            self.title.setText("Партия вдвоём")
+            self.title.setText(t("Партия вдвоём"))
         session.start()
         if session.setup.time_control.untimed:
             for clock in (self.top_clock, self.bottom_clock):
@@ -234,7 +235,7 @@ class GameScreen(QWidget):
 
     def _warn_if_no_engine(self) -> None:
         if not self.engine.available and self.engine.message and self.session.mode != Mode.AI:
-            self.coach.show_text(self.engine.message + "\nОбъяснения ходов выключены.")
+            self.coach.show_text(t("{message}\nОбъяснения ходов выключены.", message=self.engine.message))
 
     # --- moves ---------------------------------------------------------------
 
@@ -319,7 +320,7 @@ class GameScreen(QWidget):
         self._ai_ticket = None
         self._ai_error = True
         session.clock.stop()  # the player should not win on time because the engine died
-        self.status.setText("Stockfish не отвечает. Партия на паузе.")
+        self.status.setText(t("Stockfish не отвечает. Партия на паузе."))
         self.coach.show_text(message)
         self._refresh_controls()
 
@@ -341,7 +342,7 @@ class GameScreen(QWidget):
 
         def failed(message: str) -> None:
             if self._still_played(session, played):
-                self._comments[played.ply] = (f"Объяснение недоступно: {message}", None)
+                self._comments[played.ply] = (t("Объяснение недоступно: {message}", message=message), None)
                 self._refresh_coach()
 
         self._tickets.append(self.engine.request_explanation(played.board_before, played.move, done, failed))
@@ -379,35 +380,34 @@ class GameScreen(QWidget):
             plies = [self._view_ply - 1, self._view_ply]
         blocks = []
         if self._hint_text and at_latest:
-            blocks.append(ExplanationBlock("Подсказка", self._hint_text))
+            blocks.append(ExplanationBlock(t("Подсказка"), self._hint_text))
         for ply in plies:
             if ply <= 0:
                 continue
             san = session.sans[ply - 1]
             color = chess.WHITE if (ply % 2 == 1) == (chess.Board(session.start_fen).turn == chess.WHITE) else chess.BLACK
             who = self._mover_name(color)
-            title = f"{who}: {ru_san(san)}"
+            title = f"{who}: {display_san(san)}"
             comment = self._comments.get(ply)
             if comment is None:
                 blocks.append(ExplanationBlock(title, "", pending=self.engine.available))
                 if not self.engine.available:
-                    blocks[-1].text = "Объяснений нет: Stockfish недоступен."
+                    blocks[-1].text = t("Объяснений нет: Stockfish недоступен.")
             else:
                 blocks.append(ExplanationBlock(title, comment[0], comment[1]))
         if not blocks:
             self.coach.show_text(
-                "Здесь после каждого хода появится разбор: что он изменил в оценке, "
-                "какой ход был лучше и почему."
+                t("Здесь после каждого хода появится разбор: что он изменил в оценке, какой ход был лучше и почему.")
             )
             return
         self.coach.show_blocks(blocks)
 
     def _mover_name(self, color: bool) -> str:
         session = self.session
-        side = "Белые" if color == chess.WHITE else "Чёрные"
+        side = t("Белые") if color == chess.WHITE else t("Чёрные")
         if session.mode != Mode.AI:
             return side
-        return "Ваш ход" if color == session.setup.player_color else "Ход AI"
+        return t("Ваш ход") if color == session.setup.player_color else t("Ход AI")
 
     # --- persistence ---------------------------------------------------------
 
@@ -484,8 +484,8 @@ class GameScreen(QWidget):
         if session is None or session.is_over:
             return
         color = session.setup.player_color if session.mode == Mode.AI else session.board.turn
-        side = "Белые сдаются" if color == chess.WHITE else "Чёрные сдаются"
-        if QMessageBox.question(self, "Сдаться", f"{side}. Точно?") != QMessageBox.Yes:
+        question = t("Белые сдаются. Точно?") if color == chess.WHITE else t("Чёрные сдаются. Точно?")
+        if QMessageBox.question(self, t("Сдаться"), question) != QMessageBox.Yes:
             return
         if self.session is session and not session.is_over:
             session.resign(color)
@@ -496,7 +496,7 @@ class GameScreen(QWidget):
         if session is None or session.is_over:
             return
         if session.mode == Mode.LOCAL:
-            answer = QMessageBox.question(self, "Ничья", "Оба игрока согласны на ничью?")
+            answer = QMessageBox.question(self, t("Ничья"), t("Оба игрока согласны на ничью?"))
             if answer == QMessageBox.Yes and self.session is session and not session.is_over:
                 session.agree_draw()
                 self._on_game_over()
@@ -513,11 +513,11 @@ class GameScreen(QWidget):
                 session.agree_draw()
                 self._on_game_over()
             elif accepted:
-                self.status.setText("Позиция изменилась, предложите ничью ещё раз.")
+                self.status.setText(t("Позиция изменилась, предложите ничью ещё раз."))
                 self._draw_offered_at = -1
                 self._refresh_controls()
             else:
-                self.status.setText("AI отказался от ничьей: по его оценке, можно играть дальше.")
+                self.status.setText(t("AI отказался от ничьей: по его оценке, можно играть дальше."))
 
         def failed(message: str) -> None:
             if self.session is session and not session.is_over:
@@ -573,7 +573,7 @@ class GameScreen(QWidget):
         if session is None or session.is_over or session.is_ai_turn or self._view_ply != session.ply_count:
             return
         self.hint_button.setEnabled(False)
-        self._hint_text = "Считаю…"
+        self._hint_text = t("Считаю…")
         self._refresh_coach()
         position = session.fen
 
@@ -581,7 +581,7 @@ class GameScreen(QWidget):
             if self.session is not session or session.is_over or session.fen != position:
                 return
             before = len(self._seen_terms)
-            self._hint_text = "\n".join(h.render(self._seen_terms) for h in hints) or "Вариантов нет."
+            self._hint_text = "\n".join(h.render(self._seen_terms) for h in hints) or t("Вариантов нет.")
             if len(self._seen_terms) != before:
                 self.db.save_seen_terms(self._seen_terms)
             self.board.set_arrows(
@@ -665,11 +665,11 @@ class GameScreen(QWidget):
 
     def _player_name(self, color: bool) -> str:
         session = self.session
-        side = "Белые" if color == chess.WHITE else "Чёрные"
         if session.mode != Mode.AI:
-            return side
-        who = "Вы" if color == session.setup.player_color else f"Stockfish, уровень {session.setup.level}"
-        return f"{who} ({side.lower()})"
+            return t("Белые") if color == chess.WHITE else t("Чёрные")
+        side = t("белые") if color == chess.WHITE else t("чёрные")
+        who = t("Вы") if color == session.setup.player_color else t("Stockfish, уровень {level}", level=session.setup.level)
+        return f"{who} ({side})"
 
     def _refresh_clocks(self) -> None:
         session = self.session
@@ -689,17 +689,17 @@ class GameScreen(QWidget):
         if session.outcome is not None:
             self.status.setText(session.outcome.text)
         elif self._paused:
-            self.status.setText("Пауза")
+            self.status.setText(t("Пауза"))
         elif self._ai_error:
             pass
         elif session.is_ai_turn:
-            self.status.setText("AI думает…")
+            self.status.setText(t("AI думает…"))
         elif session.board.is_check():
-            self.status.setText("Шах!")
+            self.status.setText(t("Шах!"))
         elif session.mode == Mode.AI:
-            self.status.setText("Ваш ход")
+            self.status.setText(t("Ваш ход"))
         else:
-            self.status.setText("Ход белых" if session.board.turn == chess.WHITE else "Ход чёрных")
+            self.status.setText(t("Ход белых") if session.board.turn == chess.WHITE else t("Ход чёрных"))
 
     def _refresh_controls(self) -> None:
         session = self.session
@@ -714,7 +714,7 @@ class GameScreen(QWidget):
         self.resign_button.setEnabled(running and not self._paused)
         self.pause_button.setVisible(session.mode == Mode.LOCAL)
         self.pause_button.setEnabled(session.can_pause)
-        self.pause_button.setText("Продолжить" if self._paused else "Пауза")
+        self.pause_button.setText(t("Продолжить") if self._paused else t("Пауза"))
         self.rematch_button.setVisible(not running)
         self.review_button.setVisible(not running)
         self.review_button.setEnabled(session.ply_count > 0)

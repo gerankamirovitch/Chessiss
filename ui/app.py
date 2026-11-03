@@ -7,9 +7,11 @@ from datetime import datetime
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from core.i18n import set_language, t
 from core.paths import data_dir, database_path, puzzle_seed_path
 from storage.db import Database
 from ui.engine_service import EngineService
+from ui.fx import install_press_animation
 from ui.main_window import MainWindow
 from ui.sound import SoundPlayer
 from ui.theme import THEMES, apply_theme
@@ -28,7 +30,7 @@ def _log_exception(kind, value, trace) -> None:
     if QApplication.instance() is not None:
         QMessageBox.critical(
             None, "Chessiss",
-            f"Внутренняя ошибка: {value}\nПодробности записаны в {data_dir() / 'error.log'}.",
+            t("Внутренняя ошибка: {error}\nПодробности записаны в {path}.", error=value, path=data_dir() / "error.log"),
         )
 
 
@@ -37,7 +39,9 @@ def create_window(app: QApplication) -> tuple[MainWindow, Database, EngineServic
     seed = puzzle_seed_path()
     if seed.exists():
         db.seed_puzzles_from_file(seed)
+    set_language(db.get_setting("language"))
     apply_theme(app, THEMES.get(db.get_setting("theme"), THEMES["light"]))
+    install_press_animation(app)
     engine = EngineService(db.get_setting("stockfish_path") or "")
     sound = SoundPlayer(db.get_setting("sound") == "1")
     window = MainWindow(db, engine, sound)

@@ -125,7 +125,7 @@ def test_save_review_replaces_annotations(db):
 
 
 def test_settings_defaults_and_overrides(db):
-    assert db.get_setting("theme") == "light"
+    assert db.get_setting("theme") == "dark"
     assert db.get_setting("unknown") is None
     assert db.get_setting("unknown", "x") == "x"
     db.set_setting("theme", "dark")
