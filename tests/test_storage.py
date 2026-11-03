@@ -184,3 +184,15 @@ def test_first_solve_with_hint_on_unsolved_puzzle_sets_flag(db):
     assert db.get_puzzle("a").used_hint is False
     db.mark_puzzle_solved("a", used_hint=True)
     assert db.get_puzzle("a").solved and db.get_puzzle("a").used_hint
+
+
+def test_a_new_puzzle_file_replaces_unsolved_old_puzzles_and_keeps_solved_ones(db, tmp_path):
+    import json
+    db.seed_puzzles([puzzle("old_solved"), puzzle("old_open"), puzzle("kept")])
+    db.mark_puzzle_solved("old_solved", used_hint=False)
+    seed = tmp_path / "puzzles.json"
+    seed.write_text(json.dumps({"puzzles": [puzzle("kept"), puzzle("new")]}), encoding="utf-8")
+    assert db.seed_puzzles_from_file(seed) == 1
+    assert {p.id for p in db.list_puzzles()} == {"old_solved", "kept", "new"}
+    assert db.get_puzzle("old_solved").solved is True
+    assert db.seed_puzzles_from_file(seed) == 0, "the same file twice changes nothing"

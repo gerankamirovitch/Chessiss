@@ -102,7 +102,7 @@ def test_every_seed_puzzle_replays_legally_and_ends_as_its_theme_says(seed):
         for uci in puzzle["solution"]:
             assert chess.Move.from_uci(uci) in board.legal_moves, puzzle["id"]
             board.push_uci(uci)
-        if puzzle["theme"] in ("mate1", "mate2", "mate3"):
+        if puzzle["theme"] in ("mate1", "mate2", "mate3", "mate4"):
             assert board.is_checkmate(), puzzle["id"]
             assert len(puzzle["solution"]) == int(puzzle["theme"][-1]) * 2 - 1, puzzle["id"]
 

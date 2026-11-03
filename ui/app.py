@@ -14,7 +14,7 @@ from ui.engine_service import EngineService
 from ui.fx import install_press_animation
 from ui.main_window import MainWindow
 from ui.sound import SoundPlayer
-from ui.theme import THEMES, apply_theme
+from ui.theme import apply_theme, theme_by_name
 
 
 def _log_exception(kind, value, trace) -> None:
@@ -40,10 +40,10 @@ def create_window(app: QApplication) -> tuple[MainWindow, Database, EngineServic
     if seed.exists():
         db.seed_puzzles_from_file(seed)
     set_language(db.get_setting("language"))
-    apply_theme(app, THEMES.get(db.get_setting("theme"), THEMES["light"]))
+    apply_theme(app, theme_by_name(db.get_setting("theme")))
     install_press_animation(app)
     engine = EngineService(db.get_setting("stockfish_path") or "")
-    sound = SoundPlayer(db.get_setting("sound") == "1")
+    sound = SoundPlayer(db.get_setting("sound") == "1", db.get_setting("move_sound"))
     window = MainWindow(db, engine, sound)
     return window, db, engine
 

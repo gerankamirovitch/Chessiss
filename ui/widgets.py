@@ -1,4 +1,4 @@
-"""Widgets shared between screens: move list, evaluation graph, explanation panel, FEN bar."""
+"""Widgets shared between screens: move list, evaluation graph, explanation chat, ID button."""
 from __future__ import annotations
 
 import html
@@ -6,25 +6,29 @@ from dataclasses import dataclass
 from typing import Optional, Sequence
 
 import chess
-from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEasingCurve, QPointF, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QKeySequence, QPainter, QPainterPath, QPen, QShortcut
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QFrame,
+    QGraphicsOpacityEffect,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
+    QScrollArea,
+    QSizePolicy,
+    QStyle,
     QTableWidget,
     QTableWidgetItem,
-    QTextBrowser,
+    QVBoxLayout,
     QWidget,
 )
 
 from core.explain import Mark
 from core.i18n import t
 from core.pgn_io import display_san
-from ui.theme import LIGHT, MARK_COLORS, Theme
+from ui.theme import LIGHT, MARK_COLORS, Theme, current_theme
 
 
 def header_bar(title: str, on_back) -> tuple[QWidget, QLabel]:
@@ -225,58 +229,253 @@ class EvalGraph(QWidget):
         self.plySelected.emit(max(0, min(len(self._evals), round(fraction * len(self._evals)))))
 
 
+ME = "me"
+THEM = "them"
+SYSTEM = ""
+
+MY_BUBBLE = "#ffffff"
+MY_TEXT = "#1d1d1f"
+THEIR_BUBBLE = "#3a3a3c"
+THEIR_TEXT = "#f5f5f7"
+BUBBLE_RADIUS = 18.0
+TAIL = 8
+BUBBLE_SHARE = 0.84
+APPEAR_MS = 220
+
+
 @dataclass
 class ExplanationBlock:
     title: str
     text: str
     mark: Optional[Mark] = None
     pending: bool = False
+    side: str = SYSTEM  # ME: right, white; THEM: left, dark; SYSTEM: a note in the middle
+
+    def plain(self) -> str:
+        badge = f" {self.mark.label}" if self.mark is not None else ""
+        return f"{self.title}{badge}\n{t('Считаю…') if self.pending else self.text}"
 
 
-class ExplanationPanel(QTextBrowser):
+class ChatBubble(QFrame):
+    """One message. Strongly rounded; its tail at the bottom points to the speaker's side."""
+
+    def __init__(self, block: ExplanationBlock, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.block = block
+        self.side = block.side
+        self.label = QLabel()
+        self.label.setWordWrap(True)
+        self.label.setTextFormat(Qt.RichText)
+        self.label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        layout = QVBoxLayout(self)
+        tail_left = TAIL if self.side == THEM else 0
+        tail_right = TAIL if self.side == ME else 0
+        layout.setContentsMargins(14 + tail_left, 9, 14 + tail_right, 10)
+        layout.addWidget(self.label)
+        self.refresh()
+
+    def text_color(self) -> str:
+        if self.side == ME:
+            return MY_TEXT
+        if self.side == THEM:
+            return THEIR_TEXT
+        return current_theme().text_muted
+
+    def refresh(self) -> None:
+        block = self.block
+        color = MARK_COLORS[block.mark] if block.mark is not None else None
+        badge = f' <span style="color:{color}; font-weight:600;">{block.mark.label}</span>' if color else ""
+        body = t("Считаю…") if block.pending else block.text
+        lines = "<br>".join(html.escape(line) for line in body.split("\n"))
+        title = f"<b>{html.escape(block.title)}</b>{badge}<br>" if block.title else ""
+        align = "center" if self.side == SYSTEM else "left"
+        self.label.setStyleSheet(f"color: {self.text_color()}; background: transparent;")
+        self.label.setText(f'<div style="text-align:{align};">{title}{lines}</div>')
+
+    def fit_text(self, max_width: int) -> None:
+        """As wide as the longest line needs, up to max_width: short messages stay small,
+        long ones use the whole width before they wrap."""
+        self.ensurePolished()
+        self.label.ensurePolished()  # the stylesheet font, not the default one
+        margins = self.layout().contentsMargins()
+        room = max_width - margins.left() - margins.right()
+        metrics = self.label.fontMetrics()
+        body = t("Считаю…") if self.block.pending else self.block.text
+        lines = body.split("\n") + [self.block.title + (f" {self.block.mark.label}" if self.block.mark else "")]
+        natural = max(metrics.horizontalAdvance(line) for line in lines) * 1.08 + 4  # bold title
+        width = max(40, int(min(room, natural)))
+        # A wrapped label in a layout often gets a height for some other width, and the
+        # rows overlap. Here the size is fixed from the real width.
+        height = self.label.heightForWidth(width)
+        if height <= 0:
+            height = self.label.sizeHint().height()
+        self.label.setFixedSize(width, height)
+        self.setFixedSize(width + margins.left() + margins.right(), height + margins.top() + margins.bottom())
+
+    def bubble_path(self) -> QPainterPath:
+        rect = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        if self.side == ME:
+            body = rect.adjusted(0, 0, -TAIL, 0)
+        elif self.side == THEM:
+            body = rect.adjusted(TAIL, 0, 0, 0)
+        else:
+            body = rect
+        path = QPainterPath()
+        path.addRoundedRect(body, BUBBLE_RADIUS, BUBBLE_RADIUS)
+        if self.side in (ME, THEM):
+            direction = 1 if self.side == ME else -1
+            edge = body.right() if self.side == ME else body.left()
+            bottom = body.bottom()
+            tail = QPainterPath(QPointF(edge - direction * 16, bottom - 20))
+            tail.quadTo(QPointF(edge - direction * 2, bottom - 8), QPointF(edge + direction * TAIL, bottom))
+            tail.quadTo(QPointF(edge - direction * 6, bottom + 0.5), QPointF(edge - direction * 22, bottom - 3))
+            tail.closeSubpath()
+            path = path.united(tail)
+        return path
+
+    def paintEvent(self, event) -> None:
+        if self.side == SYSTEM:
+            return
+        theme = current_theme()
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        path = self.bubble_path()
+        if self.side == ME:
+            border = QColor(theme.border) if not theme.dark else QColor(MY_BUBBLE)
+            painter.setPen(QPen(border, 1))
+            painter.setBrush(QColor(MY_BUBBLE))
+        else:
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(QColor(THEIR_BUBBLE))
+        painter.drawPath(path)
+        painter.end()
+
+
+class ExplanationPanel(QScrollArea):
+    """The coach panel as a messenger: the player's moves on the right in white bubbles,
+    the opponent's on the left in dark ones. New messages fade in; the view follows the
+    newest one."""
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
-        self.setOpenLinks(False)
+        self.setObjectName("chat")
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.setFocusPolicy(Qt.NoFocus)
         self.setMinimumHeight(120)
+        self._content = QWidget()
+        self._content.setObjectName("chatContent")
+        self._rows = QVBoxLayout(self._content)
+        self._rows.setContentsMargins(10, 10, 10, 10)
+        self._rows.setSpacing(8)
+        self._rows.addStretch(1)
+        self.setWidget(self._content)
+        self.bubbles: list[ChatBubble] = []
+        self._row_layouts: list[QHBoxLayout] = []
+        self._shown: list[ExplanationBlock] = []
+        self._animations: list[QPropertyAnimation] = []
+
+    def toPlainText(self) -> str:
+        return "\n".join(block.plain() for block in self._shown)
 
     def show_blocks(self, blocks: Sequence[ExplanationBlock]) -> None:
-        parts = []
+        blocks = list(blocks)
+        if blocks == self._shown:
+            return
+        before = [(b.side, b.title, b.text, b.mark) for b in self._shown]
+        self._clear()
+        self._shown = blocks
         for block in blocks:
-            color = MARK_COLORS[block.mark] if block.mark is not None else None
-            badge = f' <span style="color:{color}; font-weight:600;">{block.mark.label}</span>' if color else ""
-            parts.append(f"<p style='margin:0 0 2px 0;'><b>{html.escape(block.title)}</b>{badge}</p>")
-            body = t("Считаю…") if block.pending else block.text
-            lines = "<br>".join(html.escape(line) for line in body.split("\n"))
-            parts.append(f"<p style='margin:0 0 10px 0;'>{lines}</p>")
-        self.setHtml("".join(parts))
+            bubble = ChatBubble(block)
+
+            bubble.fit_text(self._bubble_width())
+            row = QHBoxLayout()
+            row.setContentsMargins(0, 0, 0, 0)
+            if block.side != ME:
+                row.addWidget(bubble)
+            if block.side in (ME, SYSTEM):
+                row.insertStretch(0, 1)
+            if block.side in (THEM, SYSTEM):
+                row.addStretch(1)
+            if block.side == ME:
+                row.addWidget(bubble)
+            self._rows.insertLayout(self._rows.count() - 1, row)
+            self._row_layouts.append(row)
+            self.bubbles.append(bubble)
+            if (block.side, block.title, block.text, block.mark) not in before:
+                self._fade_in(bubble)
+        QTimer.singleShot(0, self._scroll_to_end)
 
     def show_text(self, text: str) -> None:
-        self.setHtml("<br>".join(html.escape(line) for line in text.split("\n")))
+        self.show_blocks([ExplanationBlock("", text)])
+
+    def _bubble_width(self) -> int:
+        """From the panel's own width with room kept for the scroll bar, so the bubbles
+        do not change size when the bar appears."""
+        bar = self.style().pixelMetric(QStyle.PM_ScrollBarExtent)
+        inner = self.width() - 2 * self.frameWidth() - bar - 20
+        return max(160, int(inner * BUBBLE_SHARE))
+
+    def _clear(self) -> None:
+        for animation in self._animations:
+            animation.stop()
+        self._animations = []
+        for row in self._row_layouts:
+            self._rows.removeItem(row)
+            row.deleteLater()
+        for bubble in self.bubbles:
+            bubble.hide()  # gone at once; the object itself goes with the next event loop pass
+            bubble.setParent(None)
+            bubble.deleteLater()
+        self._row_layouts = []
+        self.bubbles = []
+
+    def _fade_in(self, bubble: ChatBubble) -> None:
+        effect = QGraphicsOpacityEffect(bubble)
+        effect.setOpacity(0.0)
+        bubble.setGraphicsEffect(effect)
+        animation = QPropertyAnimation(effect, b"opacity", self)
+        animation.setDuration(APPEAR_MS)
+        animation.setStartValue(0.0)
+        animation.setEndValue(1.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+        # The effect goes away at the end: a still bubble is drawn as cheaply as any widget.
+        animation.finished.connect(lambda: bubble.setGraphicsEffect(None))
+        animation.start()
+        self._animations.append(animation)
+
+    def _scroll_to_end(self) -> None:
+        bar = self.verticalScrollBar()
+        bar.setValue(bar.maximum())
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        width = self._bubble_width()
+        for bubble in self.bubbles:
+            bubble.fit_text(width)
 
 
 class FenBar(QWidget):
+    """One button under the board, bottom left: it copies the position's FEN, its ID."""
+
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        label = QLabel("FEN")
-        label.setObjectName("muted")
-        self.field = QLineEdit()
-        self.field.setReadOnly(True)
-        self.copy_button = QPushButton(t("Копировать"))
+        self.fen = ""
+        self.copy_button = QPushButton(t("Копировать ID"))
         self.copy_button.setAutoDefault(False)
+        self.copy_button.setToolTip(t("Копирует FEN позиции в буфер обмена"))
         self.copy_button.clicked.connect(self._copy)
-        layout.addWidget(label)
-        layout.addWidget(self.field, 1)
         layout.addWidget(self.copy_button)
+        layout.addStretch(1)
 
     def set_fen(self, fen: str) -> None:
-        self.field.setText(fen)
-        self.field.setCursorPosition(0)
+        self.fen = fen
 
     def _copy(self) -> None:
-        QGuiApplication.clipboard().setText(self.field.text())
+        QGuiApplication.clipboard().setText(self.fen)
 
 
 class NavBar(QWidget):

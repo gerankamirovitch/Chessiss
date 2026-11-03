@@ -31,6 +31,8 @@ from ui.engine_service import EngineService, Ticket
 from ui.theme import MARK_COLORS, Theme
 from ui.widgets import (
     EvalGraph,
+    ME,
+    THEM,
     ExplanationBlock,
     ExplanationPanel,
     FenBar,
@@ -92,6 +94,7 @@ class AnalysisScreen(QWidget):
         self._marks: dict[int, Mark] = {}
         self._evals: dict[int, int] = {}
         self._ticket: Optional[Ticket] = None
+        self._my_color = chess.WHITE
 
         header, self.title = header_bar(t("Анализ партии"), self._on_back)
         self.board = BoardWidget(theme)
@@ -226,6 +229,8 @@ class AnalysisScreen(QWidget):
                 self._marks[stored.ply] = Mark(stored.mark)
                 self.moves.set_mark(stored.ply, self._marks[stored.ply])
         self.board.set_flipped(row.player_color == chess.BLACK)
+        self.board.clear_user_marks()
+        self._my_color = chess.BLACK if row.player_color == chess.BLACK else chess.WHITE  # imported: white
         self.title.setText(game.title)
         self.analyze_button.setEnabled(bool(game.moves))
         self.export_button.setEnabled(True)
@@ -270,15 +275,17 @@ class AnalysisScreen(QWidget):
         board = self.game.board_at(self._ply - 1)
         side = t("Белые") if board.turn == chess.WHITE else t("Чёрные")
         title = f"{side}: {display_san(san)}"
+        speaker = ME if board.turn == self._my_color else THEM
         comment = self._comments.get(self._ply)
         if comment is None:
-            self.coach.show_blocks([ExplanationBlock(title, t("Ход ещё не разобран."))])
+            self.coach.show_blocks([ExplanationBlock(title, t("Ход ещё не разобран."), side=speaker)])
         elif not written_in_current_language(comment):
             self.coach.show_blocks([ExplanationBlock(
                 title, t("Этот ход разбирался на другом языке. Запустите анализ ещё раз."), self._marks.get(self._ply),
+                side=speaker,
             )])
         else:
-            self.coach.show_blocks([ExplanationBlock(title, comment, self._marks.get(self._ply))])
+            self.coach.show_blocks([ExplanationBlock(title, comment, self._marks.get(self._ply), side=speaker)])
 
     def _refresh_graph(self) -> None:
         count = self._last_ply()

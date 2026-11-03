@@ -137,12 +137,10 @@ class PuzzleSolveScreen(QWidget):
         self.hint_button.clicked.connect(self._on_hint)
         self.reset_button = QPushButton(t("Сначала"))
         self.reset_button.clicked.connect(self._on_reset)
-        self.flip_button = QPushButton(t("Повернуть"))
-        self.flip_button.clicked.connect(lambda: self.board.set_flipped(not self.board.flipped))
         self.next_button = QPushButton(t("Следующий"))
         self.next_button.setObjectName("primary")
         self.next_button.clicked.connect(self._on_next)
-        for button in (self.hint_button, self.reset_button, self.flip_button, self.next_button):
+        for button in (self.hint_button, self.reset_button, self.next_button):
             button.setAutoDefault(False)
 
         side = QVBoxLayout()
@@ -150,7 +148,7 @@ class PuzzleSolveScreen(QWidget):
         side.addWidget(self.info)
         side.addWidget(self.feedback)
         side.addStretch(1)
-        for button in (self.hint_button, self.reset_button, self.flip_button, self.next_button):
+        for button in (self.hint_button, self.reset_button, self.next_button):
             side.addWidget(button)
         side_widget = QWidget()
         side_widget.setLayout(side)
@@ -259,7 +257,18 @@ class PuzzleSolveScreen(QWidget):
         self.task.setText(t("Ход {side}. Найдите лучшее продолжение.", side=side))
         self._refresh_board(animate=False)
 
+    def _next_position(self) -> int | None:
+        """The next puzzle not solved yet; once the rest are all solved, simply the next one.
+        So a run through a theme does not bring back what was already done."""
+        later = range(self._position + 1, len(self._queue))
+        for position in later:
+            puzzle = self.db.get_puzzle(self._queue[position])
+            if puzzle is not None and not puzzle.solved:
+                return position
+        return self._position + 1 if self._position + 1 < len(self._queue) else None
+
     def _on_next(self) -> None:
-        if self._position + 1 < len(self._queue):
-            self._position += 1
+        position = self._next_position()
+        if position is not None:
+            self._position = position
             self.open_puzzle(self._queue[self._position])

@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS settings (
 DEFAULT_SETTINGS = {
     "theme": "dark",
     "sound": "1",
+    "move_sound": "wood",
     "language": "ru",
     "ai_level": "5",
     "stockfish_path": "",
@@ -291,9 +292,23 @@ class Database:
         if self.get_setting("puzzle_seed") == version and self.puzzle_count() > 0:
             return 0
         with path.open(encoding="utf-8") as stream:
-            added = self.seed_puzzles(json.load(stream)["puzzles"])
+            puzzles = json.load(stream)["puzzles"]
+        added = self.seed_puzzles(puzzles)
+        self._drop_retired_puzzles({p["id"] for p in puzzles})
         self.set_setting("puzzle_seed", version)
         return added
+
+    def _drop_retired_puzzles(self, current: set[str]) -> None:
+        """A new puzzle set replaces the old one. Puzzles already solved stay, with their
+        marks, so the statistics keep what the player did."""
+        with self._db:
+            self._db.execute("CREATE TEMP TABLE IF NOT EXISTS current_puzzles(id TEXT PRIMARY KEY)")
+            self._db.execute("DELETE FROM current_puzzles")
+            self._db.executemany("INSERT OR IGNORE INTO current_puzzles(id) VALUES(?)", [(i,) for i in current])
+            self._db.execute(
+                "DELETE FROM puzzles WHERE solved = 0 AND id NOT IN (SELECT id FROM current_puzzles)"
+            )
+            self._db.execute("DELETE FROM current_puzzles")
 
     def puzzle_count(self) -> int:
         return int(self._db.execute("SELECT COUNT(*) FROM puzzles").fetchone()[0])

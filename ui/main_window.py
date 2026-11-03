@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import QEasingCurve, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QSize, Qt, QVariantAnimation
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
@@ -15,7 +16,6 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
-    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
@@ -33,44 +33,61 @@ from ui.fx import cross_fade
 from ui.game_screen import ACTIVE_GAME_KEY, GameScreen
 from ui.history_screen import GameTable, HistoryScreen
 from ui.home_widgets import ExpandingIconButton, StatsCard
+from ui.logo import AnimatedLogo
+from ui.mascot import MascotStage
 from ui.new_game_dialog import NewGameDialog
 from ui.puzzle_screens import PuzzleListScreen, PuzzleSolveScreen
 from ui.settings_screen import SettingsScreen
 from ui.sound import SoundPlayer
-from ui.theme import THEMES, apply_theme
+from ui.backdrop import Backdrop
+from ui.theme import apply_theme, theme_by_name
 
 COLLAPSED_GAMES = 3
 EXPAND_MS = 260
+MODE_SIZE = QSize(316, 104)
+MODE_GAP = 14
+STATS_WIDTH = 460
 
 
 class HomeScreen(QWidget):
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        title = QLabel("Chessiss")
-        title.setObjectName("appTitle")
+        self.logo = AnimatedLogo()
         subtitle = QLabel(t("Шахматы с тренером, который объясняет каждый ход"))
         subtitle.setObjectName("muted")
+        subtitle.setAlignment(Qt.AlignCenter)
+        self.stage = MascotStage()
 
         self.ai_button = self._mode_button(t("Против AI\nИгра с разбором ходов"))
-        self.local_button = self._mode_button(t("Вдвоём\nЗа одним компьютером"))
         self.puzzles_button = self._mode_button(t("Пазлы\nТактика по темам"))
+        self.local_button = self._mode_button(t("Вдвоём\nЗа одним компьютером"))
         self.analysis_button = self._mode_button(t("Анализ партии\nЗагрузить PGN и разобрать"))
 
         grid = QGridLayout()
-        grid.setSpacing(12)
+        grid.setSpacing(MODE_GAP)
         grid.addWidget(self.ai_button, 0, 0)
-        grid.addWidget(self.local_button, 0, 1)
-        grid.addWidget(self.puzzles_button, 1, 0)
+        grid.addWidget(self.puzzles_button, 0, 1)
+        grid.addWidget(self.local_button, 1, 0)
         grid.addWidget(self.analysis_button, 1, 1)
-
-        self.stats = StatsCard()
-        top = QHBoxLayout()
-        top.setSpacing(12)
-        top.addLayout(grid, 2)
-        top.addWidget(self.stats, 1)
+        modes = QHBoxLayout()
+        modes.addStretch(1)
+        modes.addLayout(grid)
+        modes.addStretch(1)
 
         self.resume_button = QPushButton(t("Продолжить прерванную партию"))
         self.resume_button.setObjectName("primary")
+        self.resume_button.setFixedWidth(2 * MODE_SIZE.width() + MODE_GAP)
+        resume_row = QHBoxLayout()
+        resume_row.addStretch(1)
+        resume_row.addWidget(self.resume_button)
+        resume_row.addStretch(1)
+
+        self.stats = StatsCard()
+        self.stats.setFixedWidth(STATS_WIDTH)
+        stats_row = QHBoxLayout()
+        stats_row.addStretch(1)
+        stats_row.addWidget(self.stats)
+        stats_row.addStretch(1)
 
         self.history_button = ExpandingIconButton("history", t("История"))
         self.settings_button = ExpandingIconButton("settings", t("Настройки"))
@@ -100,6 +117,7 @@ class HomeScreen(QWidget):
         self.recent_empty = QLabel(t("Здесь появятся сыгранные партии."))
         self.recent_empty.setObjectName("muted")
         self._expanded = False
+        self._logo_played = False
         self._height_animation = QVariantAnimation(self)
         self._height_animation.setDuration(EXPAND_MS)
         self._height_animation.setEasingCurve(QEasingCurve.OutCubic)
@@ -108,13 +126,15 @@ class HomeScreen(QWidget):
 
         column = QVBoxLayout()
         column.setSpacing(12)
-        column.addWidget(title)
+        column.addWidget(self.logo)
         column.addWidget(subtitle)
-        column.addSpacing(6)
-        column.addLayout(top)
-        column.addWidget(self.resume_button)
+        column.addWidget(self.stage)
+        column.addLayout(modes)
+        column.addLayout(resume_row)
         column.addWidget(self.engine_warning)
-        column.addSpacing(6)
+        column.addSpacing(10)
+        column.addLayout(stats_row)
+        column.addSpacing(10)
         column.addLayout(recent_row)
         column.addWidget(self.recent_empty)
         column.addWidget(self.recent)
@@ -145,8 +165,16 @@ class HomeScreen(QWidget):
         button.setObjectName("modeButton")
         button.setAutoDefault(False)
         button.setCursor(Qt.PointingHandCursor)
-        button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Expanding)  # as tall as the statistics card
+        button.setFixedSize(MODE_SIZE)  # the stylesheet keeps the same height: 60 + padding + border
         return button
+
+    def on_shown(self) -> None:
+        """Called each time the home screen opens: the title runs in once per start, the
+        girl greets every time."""
+        if not self._logo_played:
+            self._logo_played = True
+            self.logo.play()
+        self.stage.greet()
 
     def set_games(self, games: list[GameRow]) -> None:
         self.recent.set_games(games)
@@ -190,15 +218,22 @@ class MainWindow(QMainWindow):
         self.setMinimumSize(900, 620)
 
         self.stack = QStackedWidget()
-        self.setCentralWidget(self.stack)
+        self.backdrop = Backdrop()
+        self.backdrop.set_theme(theme_by_name(self.db.get_setting("theme")))
+        holder = QVBoxLayout(self.backdrop)
+        holder.setContentsMargins(0, 0, 0, 0)
+        holder.addWidget(self.stack)
+        self.setCentralWidget(self.backdrop)
         self._build_screens()
+        hints = QGuiApplication.styleHints()
+        hints.colorSchemeChanged.connect(self._on_system_scheme)
         self.engine.statusChanged.connect(lambda *_: self.refresh_home())
 
         self.show_home()
 
     def _build_screens(self) -> None:
         """Texts are set when a screen is built, so a new language means new screens."""
-        theme = THEMES.get(self.db.get_setting("theme"), THEMES["light"])
+        theme = theme_by_name(self.db.get_setting("theme"))
         db, engine, sound = self.db, self.engine, self.sound
         self.home = HomeScreen()
         self.game_screen = GameScreen(db, engine, sound, theme)
@@ -232,6 +267,7 @@ class MainWindow(QMainWindow):
         self.settings.backRequested.connect(self.show_home)
         self.settings.themeChanged.connect(self.apply_theme_name)
         self.settings.soundChanged.connect(self._on_sound_changed)
+        self.settings.moveSoundChanged.connect(self._on_move_sound_changed)
         self.settings.languageChanged.connect(self.apply_language)
 
     def _screens(self) -> tuple[QWidget, ...]:
@@ -250,6 +286,7 @@ class MainWindow(QMainWindow):
         self.refresh_home()
         self._show(self.home)
         self.home.stats.chart.play()
+        self.home.on_shown()
 
     def refresh_home(self) -> None:
         self.home.set_games(self.db.list_games())
@@ -366,8 +403,9 @@ class MainWindow(QMainWindow):
     # --- settings ------------------------------------------------------------
 
     def apply_theme_name(self, name: str) -> None:
-        theme = THEMES.get(name, THEMES["light"])
+        theme = theme_by_name(name)
         apply_theme(QApplication.instance(), theme)
+        self.backdrop.set_theme(theme)
         for screen in (self.game_screen, self.analysis_screen, self.puzzle_solve):
             screen.set_theme(theme)
         self.refresh_home()  # the table colors its scores from the theme
@@ -389,6 +427,15 @@ class MainWindow(QMainWindow):
         cross_fade(self.stack, rebuild)
         if not self.engine.available:
             self.engine.warm_up()  # writes its message again, in the new language
+
+    def _on_system_scheme(self, *_) -> None:
+        """Glass follows Windows between its light and dark look."""
+        if self.db.get_setting("theme") == "glass":
+            self.apply_theme_name("glass")
+
+    def _on_move_sound_changed(self, style: str) -> None:
+        self.sound.set_style(style)
+        self.sound.play("move")  # a sample of the chosen sound
 
     def _on_sound_changed(self, enabled: bool) -> None:
         self.sound.enabled = enabled

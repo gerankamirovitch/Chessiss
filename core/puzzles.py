@@ -10,11 +10,23 @@ import chess
 from core.i18n import t
 
 THEMES = {
-    "fork": "Вилка",
-    "pin": "Связка",
     "mate1": "Мат в 1 ход",
     "mate2": "Мат в 2 хода",
     "mate3": "Мат в 3 хода",
+    "mate4": "Мат в 4 хода",
+    "back_rank": "Мат по последней горизонтали",
+    "fork": "Вилка",
+    "pin": "Связка",
+    "skewer": "Сквозной удар",
+    "discovered": "Вскрытое нападение",
+    "double_check": "Двойной шах",
+    "deflection": "Отвлечение",
+    "attraction": "Завлечение",
+    "sacrifice": "Жертва",
+    "quiet": "Тихий ход",
+    "zugzwang": "Цугцванг",
+    "promotion": "Превращение пешки",
+    "endgame": "Эндшпиль",
     "material": "Выигрыш материала",
 }
 

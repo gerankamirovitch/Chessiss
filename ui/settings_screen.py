@@ -27,6 +27,7 @@ class SettingsScreen(QWidget):
     backRequested = Signal()
     themeChanged = Signal(str)
     soundChanged = Signal(bool)
+    moveSoundChanged = Signal(str)
     languageChanged = Signal(str)
 
     def __init__(self, db: Database, engine: EngineService, parent=None) -> None:
@@ -38,7 +39,11 @@ class SettingsScreen(QWidget):
         self.theme_box = QComboBox()
         self.theme_box.addItem(t("Светлая"), "light")
         self.theme_box.addItem(t("Тёмная"), "dark")
+        self.theme_box.addItem(t("Жидкое стекло"), "glass")
         self.sound_box = QCheckBox(t("Звук ходов"))
+        self.move_sound_box = QComboBox()
+        for name, key in ((t("Дерево"), "wood"), (t("Классический"), "classic"), (t("Пузырёк"), "bubble"), (t("8 бит"), "retro")):
+            self.move_sound_box.addItem(name, key)
         self.language_box = QComboBox()
         for code, name in LANGUAGES.items():
             self.language_box.addItem(name, code)
@@ -62,6 +67,7 @@ class SettingsScreen(QWidget):
         form = QFormLayout()
         form.addRow(t("Тема"), self.theme_box)
         form.addRow("", self.sound_box)
+        form.addRow(t("Звук хода"), self.move_sound_box)
         form.addRow(t("Язык"), self.language_box)
         form.addRow(t("Уровень AI по умолчанию"), self.level_box)
         form.addRow(t("Путь к Stockfish"), path_row)
@@ -80,6 +86,7 @@ class SettingsScreen(QWidget):
         self.load()
         self.theme_box.currentIndexChanged.connect(self._on_theme)
         self.sound_box.toggled.connect(self._on_sound)
+        self.move_sound_box.currentIndexChanged.connect(self._on_move_sound)
         self.language_box.currentIndexChanged.connect(self._on_language)
         self.level_box.valueChanged.connect(lambda v: self.db.set_setting("ai_level", str(v)))
         self.path_edit.editingFinished.connect(self._on_path_edited)
@@ -88,6 +95,8 @@ class SettingsScreen(QWidget):
     def load(self) -> None:
         self.theme_box.setCurrentIndex(self.theme_box.findData(self.db.get_setting("theme")))
         self.sound_box.setChecked(self.db.get_setting("sound") == "1")
+        self.move_sound_box.setCurrentIndex(max(0, self.move_sound_box.findData(self.db.get_setting("move_sound"))))
+        self.move_sound_box.setEnabled(self.sound_box.isChecked())
         self.language_box.setCurrentIndex(self.language_box.findData(self.db.get_setting("language")))
         self.level_box.setValue(int(self.db.get_setting("ai_level")))
         self.path_edit.setText(self.db.get_setting("stockfish_path") or "")
@@ -114,7 +123,13 @@ class SettingsScreen(QWidget):
 
     def _on_sound(self, enabled: bool) -> None:
         self.db.set_setting("sound", "1" if enabled else "0")
+        self.move_sound_box.setEnabled(enabled)
         self.soundChanged.emit(enabled)
+
+    def _on_move_sound(self) -> None:
+        value = self.move_sound_box.currentData()
+        self.db.set_setting("move_sound", value)
+        self.moveSoundChanged.emit(value)
 
     def _browse(self) -> None:
         path, _ = QFileDialog.getOpenFileName(self, "Stockfish", "", t("Программы (*.exe);;Все файлы (*)"))

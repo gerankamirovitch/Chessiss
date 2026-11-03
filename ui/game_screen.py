@@ -4,8 +4,11 @@ from __future__ import annotations
 from typing import Optional
 
 import chess
-from PySide6.QtCore import QElapsedTimer, Qt, QTimer, Signal
+from PySide6.QtCore import QEasingCurve, QElapsedTimer, QPointF, QPropertyAnimation, Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import (
+    QFrame,
+    QGraphicsOpacityEffect,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -25,8 +28,8 @@ from ui.board_widget import BoardWidget
 from ui.engine_service import EngineService, Ticket
 from ui.new_game_dialog import resolve_color
 from ui.sound import SoundPlayer
-from ui.theme import Theme
-from ui.widgets import ExplanationBlock, ExplanationPanel, FenBar, MoveList, NavBar, header_bar, navigation_shortcuts
+from ui.theme import Theme, current_theme
+from ui.widgets import ME, THEM, ExplanationBlock, ExplanationPanel, FenBar, MoveList, NavBar, header_bar, navigation_shortcuts
 
 TICK_MS = 100
 LOW_TIME_MS = 20_000
@@ -40,6 +43,73 @@ def _set_active(label: QLabel, active: bool, low: bool) -> None:
         label.setProperty("low", low)
         label.style().unpolish(label)
         label.style().polish(label)
+
+
+SWAP_FLASH_MS = 420
+
+
+class _SideChip(QWidget):
+    """A white or black disc: which side this player has."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.color = chess.WHITE
+        self.setFixedSize(18, 18)
+
+    def set_color(self, color: bool) -> None:
+        if color != self.color:
+            self.color = color
+            self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        fill = QColor("#f5f5f7") if self.color == chess.WHITE else QColor("#1d1d1f")
+        painter.setPen(QPen(QColor(current_theme().text_muted), 1.2))
+        painter.setBrush(fill)
+        painter.drawEllipse(QPointF(9, 9), 7.5, 7.5)
+        painter.end()
+
+
+class PlayerCard(QFrame):
+    """Name, side and clock of one player. The side to move is outlined; after the board
+    turns the cards trade places and blink once, so the change is easy to notice."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setObjectName("playerCard")
+        self.chip = _SideChip()
+        self.name = QLabel()
+        self.clock = QLabel("0:00")
+        self.clock.setObjectName("clock")
+        self.clock.setAlignment(Qt.AlignCenter)
+        self.clock.setMinimumWidth(130)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(10, 6, 6, 6)
+        row.setSpacing(8)
+        row.addWidget(self.chip)
+        row.addWidget(self.name, 1)
+        row.addWidget(self.clock)
+        self._flash: Optional[QPropertyAnimation] = None
+
+    def set_side(self, color: bool, to_move: bool) -> None:
+        self.chip.set_color(color)
+        if self.property("toMove") != to_move:
+            self.setProperty("toMove", to_move)
+            self.style().unpolish(self)
+            self.style().polish(self)
+
+    def flash(self) -> None:
+        effect = QGraphicsOpacityEffect(self)
+        effect.setOpacity(0.25)
+        self.setGraphicsEffect(effect)
+        self._flash = QPropertyAnimation(effect, b"opacity", self)
+        self._flash.setDuration(SWAP_FLASH_MS)
+        self._flash.setStartValue(0.25)
+        self._flash.setEndValue(1.0)
+        self._flash.setEasingCurve(QEasingCurve.OutCubic)
+        self._flash.finished.connect(lambda: self.setGraphicsEffect(None))
+        self._flash.start()
 
 
 class GameScreen(QWidget):
@@ -70,12 +140,10 @@ class GameScreen(QWidget):
         self.board = BoardWidget(theme)
         self.board.moveAttempted.connect(self._on_board_move)
 
-        self.top_name, self.bottom_name = QLabel(), QLabel()
-        self.top_clock, self.bottom_clock = QLabel("0:00"), QLabel("0:00")
-        for clock in (self.top_clock, self.bottom_clock):
-            clock.setObjectName("clock")
-            clock.setAlignment(Qt.AlignCenter)
-            clock.setMinimumWidth(130)
+        self.top_card, self.bottom_card = PlayerCard(), PlayerCard()
+        self.top_name, self.bottom_name = self.top_card.name, self.bottom_card.name
+        self.top_clock, self.bottom_clock = self.top_card.clock, self.bottom_card.clock
+        self._shown_bottom: Optional[bool] = None
 
         self.status = QLabel()
         self.status.setObjectName("status")
@@ -93,7 +161,6 @@ class GameScreen(QWidget):
         self.fen_bar = FenBar()
 
         self.hint_button = self._button(t("Подсказка"), self._on_hint)
-        self.flip_button = self._button(t("Повернуть"), self._on_flip)
         self.undo_button = self._button(t("Отменить ход"), self._on_undo)
         self.draw_button = self._button(t("Ничья"), self._on_draw)
         self.resign_button = self._button(t("Сдаться"), self._on_resign)
@@ -106,8 +173,8 @@ class GameScreen(QWidget):
         buttons = QGridLayout()
         buttons.setSpacing(6)
         for index, button in enumerate((
-            self.hint_button, self.flip_button, self.undo_button,
-            self.draw_button, self.resign_button, self.pause_button,
+            self.hint_button, self.undo_button, self.draw_button,
+            self.resign_button, self.pause_button,
         )):
             buttons.addWidget(button, index // 3, index % 3)
         end_row = QHBoxLayout()
@@ -115,23 +182,16 @@ class GameScreen(QWidget):
         end_row.addWidget(self.rematch_button)
         end_row.addWidget(self.retry_button)
 
-        top_row = QHBoxLayout()
-        top_row.addWidget(self.top_name, 1)
-        top_row.addWidget(self.top_clock)
-        bottom_row = QHBoxLayout()
-        bottom_row.addWidget(self.bottom_name, 1)
-        bottom_row.addWidget(self.bottom_clock)
-
         side = QVBoxLayout()
         side.setSpacing(6)
-        side.addLayout(top_row)
+        side.addWidget(self.top_card)
         side.addWidget(self.moves, 3)
         side.addWidget(self.nav)
         side.addWidget(self.coach, 3)
         side.addWidget(self.status)
         side.addLayout(end_row)
         side.addLayout(buttons)
-        side.addLayout(bottom_row)
+        side.addWidget(self.bottom_card)
         side_widget = QWidget()
         side_widget.setLayout(side)
         side_widget.setFixedWidth(400)
@@ -213,7 +273,12 @@ class GameScreen(QWidget):
         self._view_ply = session.ply_count
         self.board.set_controller(session)
         self.board.set_arrows([])
-        self.board.set_flipped(session.setup.player_color == chess.BLACK)
+        self.board.clear_user_marks()
+        if session.mode == Mode.LOCAL:  # the side to move sits at the bottom
+            self.board.set_flipped(session.board.turn == chess.BLACK)
+        else:
+            self.board.set_flipped(session.setup.player_color == chess.BLACK)
+        self._shown_bottom = None
         self.moves.set_start(chess.Board(session.start_fen))
         self.moves.set_moves(session.sans)
         self.moves.set_current_ply(self._view_ply)
@@ -260,6 +325,7 @@ class GameScreen(QWidget):
         self._persist_move(played)
         self._play_sound(played)
         self._refresh_all(animate=True)
+        self._turn_to_mover()
         self._request_explanation(played)
         if session.is_over:
             self._on_game_over()
@@ -376,7 +442,7 @@ class GameScreen(QWidget):
             return
         at_latest = self._view_ply == session.ply_count
         plies = [self._view_ply]
-        if at_latest and session.mode == Mode.AI and self._view_ply >= 2:
+        if at_latest and self._view_ply >= 2:  # the last two moves, like the last two messages of a chat
             plies = [self._view_ply - 1, self._view_ply]
         blocks = []
         if self._hint_text and at_latest:
@@ -388,19 +454,26 @@ class GameScreen(QWidget):
             color = chess.WHITE if (ply % 2 == 1) == (chess.Board(session.start_fen).turn == chess.WHITE) else chess.BLACK
             who = self._mover_name(color)
             title = f"{who}: {display_san(san)}"
+            side = ME if color == self._my_color() else THEM
             comment = self._comments.get(ply)
             if comment is None:
-                blocks.append(ExplanationBlock(title, "", pending=self.engine.available))
+                blocks.append(ExplanationBlock(title, "", pending=self.engine.available, side=side))
                 if not self.engine.available:
                     blocks[-1].text = t("Объяснений нет: Stockfish недоступен.")
             else:
-                blocks.append(ExplanationBlock(title, comment[0], comment[1]))
+                blocks.append(ExplanationBlock(title, comment[0], comment[1], side=side))
         if not blocks:
             self.coach.show_text(
                 t("Здесь после каждого хода появится разбор: что он изменил в оценке, какой ход был лучше и почему.")
             )
             return
         self.coach.show_blocks(blocks)
+
+    def _my_color(self) -> bool:
+        """Whose moves are "mine" in the chat: the player against the AI, white in a
+        game for two."""
+        session = self.session
+        return session.setup.player_color if session.mode == Mode.AI else chess.WHITE
 
     def _mover_name(self, color: bool) -> str:
         session = self.session
@@ -551,8 +624,18 @@ class GameScreen(QWidget):
             self.db.update_game(session.game_id, "*", session_to_pgn(session))
             self._save_active_state()
         self._refresh_all(animate=False)
+        self._turn_to_mover()
         if session.is_ai_turn:
             self._request_ai_move()
+
+    def _turn_to_mover(self) -> None:
+        """Two players at one computer: after every move and every undo the board turns
+        round so that the side to move plays from the bottom."""
+        session = self.session
+        if session is None or session.mode != Mode.LOCAL or session.is_over:
+            return
+        self.board.set_flipped(session.board.turn == chess.BLACK, animate=True)
+        self._refresh_players()
 
     def _on_rematch(self) -> None:
         session = self.session
@@ -598,10 +681,6 @@ class GameScreen(QWidget):
 
         self._hint_ticket = self.engine.request_hints(session.board, 3, done, failed)
         self._tickets.append(self._hint_ticket)
-
-    def _on_flip(self) -> None:
-        self.board.set_flipped(not self.board.flipped)
-        self._refresh_players()
 
     def _on_pause(self) -> None:
         session = self.session
@@ -661,6 +740,13 @@ class GameScreen(QWidget):
         bottom = chess.BLACK if self.board.flipped else chess.WHITE
         self.bottom_name.setText(self._player_name(bottom))
         self.top_name.setText(self._player_name(not bottom))
+        to_move = None if session.is_over else session.board.turn
+        self.bottom_card.set_side(bottom, to_move == bottom)
+        self.top_card.set_side(not bottom, to_move == (not bottom))
+        if self._shown_bottom is not None and self._shown_bottom != bottom:
+            self.top_card.flash()
+            self.bottom_card.flash()
+        self._shown_bottom = bottom
         self._refresh_clocks()
 
     def _player_name(self, color: bool) -> str:

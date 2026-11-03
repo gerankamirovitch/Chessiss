@@ -220,7 +220,7 @@ class StatsCard(QFrame):
         self.setObjectName("card")
         title = QLabel(t("Статистика"))
         title.setObjectName("status")
-        self.caption = QLabel(t("Партии против AI"))
+        self.caption = QLabel(t("Пока нет партий"))
         self.caption.setObjectName("muted")
         self.chart = DonutChart()
         self.counts: dict[str, QLabel] = {}
@@ -262,7 +262,7 @@ class StatsCard(QFrame):
 
     def set_stats(self, stats: PlayerStats) -> None:
         self.chart.set_stats(stats)
-        self.caption.setText(t("Партии против AI") if stats.total else t("Пока нет партий"))
+        self.caption.setVisible(not stats.total)
         for key, count in (("wins", stats.wins), ("draws", stats.draws), ("losses", stats.losses)):
             self.counts[key].setText(str(count))
             self.shares[key].setText(f"{round(100 * count / stats.total) if stats.total else 0}%")

@@ -7,6 +7,12 @@ the app itself never touches the network.
 In the database, FEN is the position before the opponent's move, and the first
 move of the list is that opponent's move. Here that move is already applied:
 the stored position is what the solver sees.
+
+Selection:
+- ratings 1400-2800 in four equal bands per theme, so every theme has easy and hard ones;
+- the solver makes at least two moves (except mate in one);
+- one puzzle per source game, and no position that is nearly the same as one already
+  picked for the theme (same pieces on the same squares, give or take a few).
 """
 from __future__ import annotations
 
@@ -22,18 +28,39 @@ import chess
 import zstandard
 
 URL = "https://database.lichess.org/lichess_db_puzzle.csv.zst"
-OUTPUT = Path(__file__).resolve().parent.parent / "data" / "puzzles.json"
-
 ROOT = Path(__file__).resolve().parent.parent
+OUTPUT = ROOT / "data" / "puzzles.json"
 sys.path.insert(0, str(ROOT))
 
 from core.puzzles import THEMES  # noqa: E402
 
-PER_THEME = 100
-RATING_BUCKETS = ((600, 1000), (1000, 1400), (1400, 1800), (1800, 2300))
+PER_THEME = 160
+RATING_BUCKETS = ((1400, 1750), (1750, 2050), (2050, 2350), (2350, 2800))
 MIN_POPULARITY = 80
-MIN_PLAYS = 300
-MAX_RATING_DEVIATION = 100
+MIN_PLAYS = 250
+MAX_RATING_DEVIATION = 90
+MIN_SOLVER_MOVES = 2
+SIMILAR = 0.8  # share of shared piece-squares above which two positions count as repeats
+MAX_ROWS = 5_000_000
+
+# Lichess tag for each of our themes, tried from the rarest to the most common, so that
+# a puzzle with several tags fills the theme that needs it most.
+TAGS = (
+    ("double_check", "doubleCheck"),
+    ("zugzwang", "zugzwang"),
+    ("back_rank", "backRankMate"),
+    ("skewer", "skewer"),
+    ("discovered", "discoveredAttack"),
+    ("attraction", "attraction"),
+    ("deflection", "deflection"),
+    ("quiet", "quietMove"),
+    ("promotion", "promotion"),
+    ("endgame", "endgame"),
+    ("sacrifice", "sacrifice"),
+    ("pin", "pin"),
+    ("fork", "fork"),
+)
+MATES = {"mateIn1": ("mate1", 1), "mateIn2": ("mate2", 2), "mateIn3": ("mate3", 3), "mateIn4": ("mate4", 4)}
 VALUES = {chess.PAWN: 1, chess.KNIGHT: 3, chess.BISHOP: 3, chess.ROOK: 5, chess.QUEEN: 9}
 
 
@@ -45,11 +72,33 @@ def balance(board: chess.Board, color: bool) -> int:
     return material(board, color) - material(board, not color)
 
 
-def parse(row: dict[str, str]) -> dict | None:
-    """Replays the line with python-chess and returns the stored form, or None if
-    the puzzle is not usable or does not fit one of the app's themes."""
-    themes = set(row["Themes"].split())
+def candidate_themes(row: dict[str, str], board: chess.Board, before: int, solver: bool, solver_moves: int) -> list[str]:
+    """Our themes this puzzle may go to, best fit first."""
+    tags = set(row["Themes"].split())
+    mated = board.is_checkmate()
+    themes = []
+    for tag, (theme, moves) in MATES.items():
+        if tag in tags and mated and solver_moves == moves:
+            themes.append(theme)
+    if solver_moves < MIN_SOLVER_MOVES:
+        return themes  # mate in one is the only short puzzle we keep
+    gained = balance(board, solver) - before
+    for theme, tag in TAGS:
+        if tag in tags and (mated or gained >= 2 or theme in ("zugzwang", "quiet", "promotion", "endgame")):
+            if theme == "back_rank":
+                themes.insert(0, theme)  # a back-rank mate is a better label than "mate in N"
+            else:
+                themes.append(theme)
+    if not mated and ("crushing" in tags or "advantage" in tags) and gained >= 3:
+        themes.append("material")
+    return themes
+
+
+def parse(row: dict[str, str]) -> tuple[dict, list[str]] | None:
+    """Replays the line with python-chess. Returns the stored form and the themes it fits."""
     moves = row["Moves"].split()
+    if len(moves) < 2 or len(moves) % 2 != 0:
+        return None
     board = chess.Board(row["FEN"])
     try:
         board.push_uci(moves[0])
@@ -60,32 +109,15 @@ def parse(row: dict[str, str]) -> dict | None:
             board.push_uci(uci)
     except ValueError:
         return None
-    if len(moves) < 2 or len(moves) % 2 != 0:
-        return None
-
-    if "mateIn1" in themes and len(moves) == 2 and board.is_checkmate():
-        theme = "mate1"
-    elif "mateIn2" in themes and len(moves) == 4 and board.is_checkmate():
-        theme = "mate2"
-    elif "mateIn3" in themes and len(moves) == 6 and board.is_checkmate():
-        theme = "mate3"
-    elif board.is_checkmate() or "mate" in themes:
-        return None
-    elif "fork" in themes and balance(board, solver) - before >= 2:
-        theme = "fork"
-    elif "pin" in themes and balance(board, solver) - before >= 2:
-        theme = "pin"
-    elif ("crushing" in themes or "advantage" in themes) and balance(board, solver) - before >= 3:
-        theme = "material"
-    else:
+    themes = candidate_themes(row, board, before, solver, len(moves) // 2)
+    if not themes:
         return None
     return {
         "id": row["PuzzleId"],
         "fen": start,
         "solution": moves[1:],
-        "theme": theme,
         "rating": int(row["Rating"]),
-    }
+    }, themes
 
 
 def bucket_of(rating: int) -> int | None:
@@ -95,10 +127,26 @@ def bucket_of(rating: int) -> int | None:
     return None
 
 
+def squares(fen: str) -> frozenset[tuple[int, str]]:
+    board = chess.Board(fen)
+    return frozenset((square, piece.symbol()) for square, piece in board.piece_map().items())
+
+
+def too_similar(placement: frozenset, picked: list[frozenset]) -> bool:
+    for other in picked:
+        shared = len(placement & other)
+        if shared / max(len(placement | other), 1) >= SIMILAR:
+            return True
+    return False
+
+
 def main() -> None:
     per_bucket = PER_THEME // len(RATING_BUCKETS)
     picked: dict[tuple[str, int], list[dict]] = defaultdict(list)
+    placements: dict[str, list[frozenset]] = defaultdict(list)
+    games: set[str] = set()
     wanted = len(THEMES) * len(RATING_BUCKETS)
+    skipped_repeats = 0
 
     request = urllib.request.Request(URL, headers={"User-Agent": "Chessiss puzzle builder"})
     seen = 0
@@ -106,6 +154,8 @@ def main() -> None:
         stream = zstandard.ZstdDecompressor().stream_reader(response)
         for row in csv.DictReader(io.TextIOWrapper(stream, encoding="utf-8")):
             seen += 1
+            if seen > MAX_ROWS:
+                break
             if (
                 int(row["Popularity"]) < MIN_POPULARITY
                 or int(row["NbPlays"]) < MIN_PLAYS
@@ -115,28 +165,43 @@ def main() -> None:
             bucket = bucket_of(int(row["Rating"]))
             if bucket is None:
                 continue
-            puzzle = parse(row)
-            if puzzle is None:
+            game = row["GameUrl"].split("#")[0]
+            if game in games:
                 continue
-            slot = picked[(puzzle["theme"], bucket)]
-            if len(slot) < per_bucket:
-                slot.append(puzzle)
+            parsed = parse(row)
+            if parsed is None:
+                continue
+            puzzle, themes = parsed
+            for theme in themes:
+                slot = picked[(theme, bucket)]
+                if len(slot) >= per_bucket:
+                    continue
+                placement = squares(puzzle["fen"])
+                if too_similar(placement, placements[theme]):
+                    skipped_repeats += 1
+                    break
+                slot.append({**puzzle, "theme": theme})
+                placements[theme].append(placement)
+                games.add(game)
                 full = sum(len(s) >= per_bucket for s in picked.values())
                 total = sum(len(s) for s in picked.values())
-                if total % 50 == 0:
+                if total % 100 == 0:
                     print(f"read {seen}, picked {total}, full slots {full}/{wanted}", flush=True)
-                if full == wanted:
-                    break
+                break
+            if sum(len(s) >= per_bucket for s in picked.values()) == wanted:
+                break
 
     puzzles = sorted(
         (p for slot in picked.values() for p in slot), key=lambda p: (p["theme"], p["rating"], p["id"])
     )
+    counts = {theme: sum(p["theme"] == theme for p in puzzles) for theme in THEMES}
     OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     with OUTPUT.open("w", encoding="utf-8", newline="\n") as out:
         out.write('{\n"source": "Lichess puzzle database (CC0), https://database.lichess.org/",\n"puzzles": [\n')
         out.write(",\n".join(json.dumps(p, separators=(",", ":")) for p in puzzles))
         out.write("\n]\n}\n")
-    print(f"wrote {len(puzzles)} puzzles from {seen} rows to {OUTPUT}")
+    print(f"wrote {len(puzzles)} puzzles from {seen} rows to {OUTPUT}; skipped {skipped_repeats} near repeats")
+    print(counts)
 
 
 if __name__ == "__main__":

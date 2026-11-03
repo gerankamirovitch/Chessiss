@@ -1,22 +1,36 @@
-"""Interface animations: button press and screen change. The board never goes through
-an effect, so moves stay at full frame rate."""
+"""Interface animations: buttons grow a little under the mouse and shrink when pressed,
+screens cross-fade. The board never goes through an effect, so moves stay at full frame
+rate. Also gives every combo box a list that honours the stylesheet."""
 from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, Qt, QVariantAnimation
+from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPointF, QRectF, Qt, QVariantAnimation
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QApplication, QGraphicsEffect, QGraphicsOpacityEffect, QLabel, QPushButton, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QGraphicsEffect,
+    QGraphicsOpacityEffect,
+    QLabel,
+    QPushButton,
+    QStyledItemDelegate,
+    QWidget,
+)
 
 PRESS_SCALE = 0.95
+HOVER_SCALE = 1.04
 PRESS_MS = 90
 RELEASE_MS = 160
+HOVER_MS = 140
 FADE_MS = 200
 SLIDE_PX = 14
 
 
 class _PressEffect(QGraphicsEffect):
-    """Scales the button around its center. Off at rest, so an idle button is drawn as usual."""
+    """Scales the button around its center. Off at rest, so an idle button is drawn as usual.
+    The button is drawn through the scaled painter, not as a stretched picture, so its text
+    stays sharp at any size."""
 
     def __init__(self, parent: QObject) -> None:
         super().__init__(parent)
@@ -29,18 +43,24 @@ class _PressEffect(QGraphicsEffect):
 
     def set_scale(self, scale: float) -> None:
         self._scale = scale
-        self.setEnabled(scale < 1.0)
+        self.setEnabled(abs(scale - 1.0) > 0.0005)
         self.update()
 
+    def boundingRectFor(self, rect: QRectF) -> QRectF:
+        """Room to grow past the button's own edges while hovered."""
+        grow_x = rect.width() * (HOVER_SCALE - 1) / 2 + 1
+        grow_y = rect.height() * (HOVER_SCALE - 1) / 2 + 1
+        return rect.adjusted(-grow_x, -grow_y, grow_x, grow_y)
+
     def draw(self, painter: QPainter) -> None:
-        pixmap = self.sourcePixmap(Qt.LogicalCoordinates)
         center = QPointF(self.sourceBoundingRect(Qt.LogicalCoordinates).center())
         painter.save()
         painter.setRenderHint(QPainter.SmoothPixmapTransform)
+        painter.setRenderHint(QPainter.Antialiasing)
         painter.translate(center)
         painter.scale(self._scale, self._scale)
         painter.translate(-center)
-        painter.drawPixmap(0, 0, pixmap)
+        self.drawSource(painter)
         painter.restore()
 
 
@@ -58,9 +78,24 @@ class PressAnimator(QObject):
         if kind == QEvent.MouseButtonPress or kind == QEvent.MouseButtonDblClick:
             if isinstance(watched, QPushButton) and watched.isEnabled():
                 self._animate(watched, PRESS_SCALE, PRESS_MS)
-        elif kind == QEvent.MouseButtonRelease or kind == QEvent.Hide:
+        elif kind == QEvent.Enter:
+            if isinstance(watched, QPushButton) and watched.isEnabled() and not watched.isDown():
+                self._animate(watched, HOVER_SCALE, HOVER_MS)
+        elif kind == QEvent.Leave:
+            if isinstance(watched, QPushButton) and id(watched) in self._animations:
+                self._animate(watched, 1.0, HOVER_MS)
+        elif kind == QEvent.MouseButtonRelease:
+            if isinstance(watched, QPushButton) and id(watched) in self._animations:
+                back = HOVER_SCALE if watched.isEnabled() and watched.underMouse() else 1.0
+                self._animate(watched, back, RELEASE_MS)
+        elif kind == QEvent.Hide or kind == QEvent.EnabledChange:
             if isinstance(watched, QPushButton) and id(watched) in self._animations:
                 self._animate(watched, 1.0, RELEASE_MS)
+        elif kind == QEvent.Polish:
+            if isinstance(watched, QComboBox) and not isinstance(watched.itemDelegate(), QStyledItemDelegate):
+                # The default list paints its rows like a menu and ignores the stylesheet,
+                # which left white text on a white list in the light theme.
+                watched.setItemDelegate(QStyledItemDelegate(watched))
         elif kind == QEvent.FocusIn or kind == QEvent.FocusOut:
             if isinstance(watched, QPushButton):
                 by_keyboard = kind == QEvent.FocusIn and event.reason() in (Qt.TabFocusReason, Qt.BacktabFocusReason)

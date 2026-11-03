@@ -338,7 +338,7 @@ def test_local_undo_and_navigation(no_engine):
     play(h.game, "e2e4", "e7e5", "g1f3")
     assert h.game.moves.rowCount() == 2
     h.game._go_to_ply(1)
-    assert h.game.fen_bar.field.text().startswith("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR")
+    assert h.game.fen_bar.fen.startswith("rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR")
     assert h.game.board._interactive == set(), "no moves while looking at an older position"
     h.game._go_to_latest()
     assert h.game.board._interactive == {chess.BLACK}
@@ -439,14 +439,15 @@ def test_local_resign_and_draw_with_confirmation(no_engine, answers_yes):
     assert h.game.session.outcome.result == "0-1", "white was to move"
 
 
-def test_flip_swaps_clock_owners(no_engine, fake_time):
+def test_turn_swaps_clock_owners(no_engine, fake_time):
     h = no_engine
     h.game._begin(GameSession(local_setup(TimeControl(5)), now=fake_time))
     assert h.game.bottom_name.text() == "Белые"
-    h.game._on_flip()
+    play(h.game, "e2e4")
     assert h.game.bottom_name.text() == "Чёрные"
     h.game._tick()
-    assert h.game.top_clock.property("active") is True
+    assert h.game.bottom_clock.property("active") is True
+    assert h.game.top_clock.property("active") is False
 
 
 def test_fen_can_be_copied(no_engine):
